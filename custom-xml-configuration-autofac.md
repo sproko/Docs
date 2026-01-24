@@ -1,192 +1,143 @@
-# Custom XML Configuration with Autofac and XmlSerializer
+# Custom XML Configuration with Autofac and DataContractSerializer
 
-This document outlines how to load custom XML configuration files into strongly-typed objects using `XmlSerializer`, and register them with Autofac for dependency injection.
-
-## Overview
-
-Instead of using `IConfiguration` (which flattens everything to `string` key-value pairs), we deserialize XML directly into objects and register them with Autofac.
+Load custom XML configuration files into strongly-typed objects using `DataContractSerializer`, and register them with Autofac for dependency injection.
 
 ## Example XML Configuration
 
+Clean XML - no attributes, just elements matching property names:
+
 ```xml
 <!-- features.xml -->
-<AppConfig>
+<FeaturesOptions xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
   <Features>
-    <Feature>
+    <FeatureConfig>
       <Name>Auth</Name>
       <Enabled>true</Enabled>
       <Description>Authentication and authorization settings</Description>
       <Settings>
-        <Setting>
+        <FeatureSetting>
           <Key>Timeout</Key>
           <Value>30</Value>
-          <Type>int</Type>
-        </Setting>
-        <Setting>
+        </FeatureSetting>
+        <FeatureSetting>
           <Key>RetryCount</Key>
           <Value>3</Value>
-          <Type>int</Type>
-        </Setting>
-        <Setting>
-          <Key>Provider</Key>
-          <Value>OAuth2</Value>
-          <Type>string</Type>
-        </Setting>
+        </FeatureSetting>
       </Settings>
       <Dependencies>
         <Dependency>
           <Name>Database</Name>
           <Required>true</Required>
         </Dependency>
-        <Dependency>
-          <Name>Caching</Name>
-          <Required>false</Required>
-        </Dependency>
       </Dependencies>
-      <Endpoints>
-        <Endpoint>
-          <Path>/auth/login</Path>
-          <Method>POST</Method>
-          <RateLimit>100</RateLimit>
-        </Endpoint>
-        <Endpoint>
-          <Path>/auth/refresh</Path>
-          <Method>POST</Method>
-          <RateLimit>50</RateLimit>
-        </Endpoint>
-      </Endpoints>
-    </Feature>
-    <Feature>
-      <Name>Caching</Name>
-      <Enabled>false</Enabled>
-      <Description>Distributed caching configuration</Description>
-      <Settings>
-        <Setting>
-          <Key>Duration</Key>
-          <Value>600</Value>
-          <Type>int</Type>
-        </Setting>
-        <Setting>
-          <Key>Provider</Key>
-          <Value>Redis</Value>
-          <Type>string</Type>
-        </Setting>
-      </Settings>
       <Connection>
         <Host>localhost</Host>
         <Port>6379</Port>
-        <Database>0</Database>
         <Ssl>false</Ssl>
       </Connection>
-    </Feature>
+    </FeatureConfig>
+    <FeatureConfig>
+      <Name>Caching</Name>
+      <Enabled>false</Enabled>
+      <Description>Distributed caching</Description>
+      <Settings>
+        <FeatureSetting>
+          <Key>Duration</Key>
+          <Value>600</Value>
+        </FeatureSetting>
+      </Settings>
+    </FeatureConfig>
   </Features>
-</AppConfig>
+</FeaturesOptions>
 ```
 
 ## Configuration Classes
 
-Decorate classes with `XmlSerializer` attributes to map XML elements to properties.
+Compose objects freely - just mark classes with `[DataContract]` and properties with `[DataMember]`:
 
 ```csharp
-using System.Xml.Serialization;
+using System.Runtime.Serialization;
 
-[XmlRoot("AppConfig")]
+[DataContract]
 public class FeaturesOptions
 {
-    [XmlArray("Features")]
-    [XmlArrayItem("Feature")]
-    public List<FeatureConfig> FeatureList { get; set; } = [];
-
-    /// <summary>
-    /// Convenience property to access features by name.
-    /// </summary>
-    [XmlIgnore]
-    public Dictionary<string, FeatureConfig> Features =>
-        FeatureList.ToDictionary(f => f.Name);
+    [DataMember]
+    public List<FeatureConfig> Features { get; set; } = [];
 }
 
+[DataContract]
 public class FeatureConfig
 {
-    [XmlElement("Name")]
+    [DataMember]
     public string Name { get; set; } = string.Empty;
 
-    [XmlElement("Enabled")]
+    [DataMember]
     public bool Enabled { get; set; }
 
-    [XmlElement("Description")]
+    [DataMember]
     public string Description { get; set; } = string.Empty;
 
-    [XmlArray("Settings")]
-    [XmlArrayItem("Setting")]
+    [DataMember]
     public List<FeatureSetting> Settings { get; set; } = [];
 
-    [XmlArray("Dependencies")]
-    [XmlArrayItem("Dependency")]
-    public List<FeatureDependency> Dependencies { get; set; } = [];
+    [DataMember]
+    public List<Dependency> Dependencies { get; set; } = [];
 
-    [XmlArray("Endpoints")]
-    [XmlArrayItem("Endpoint")]
-    public List<FeatureEndpoint> Endpoints { get; set; } = [];
-
-    [XmlElement("Connection")]
+    [DataMember]
     public ConnectionConfig? Connection { get; set; }
 }
 
+[DataContract]
 public class FeatureSetting
 {
-    [XmlElement("Key")]
+    [DataMember]
     public string Key { get; set; } = string.Empty;
 
-    [XmlElement("Value")]
+    [DataMember]
     public string Value { get; set; } = string.Empty;
-
-    [XmlElement("Type")]
-    public string Type { get; set; } = string.Empty;
 }
 
-public class FeatureDependency
+[DataContract]
+public class Dependency
 {
-    [XmlElement("Name")]
+    [DataMember]
     public string Name { get; set; } = string.Empty;
 
-    [XmlElement("Required")]
+    [DataMember]
     public bool Required { get; set; }
 }
 
-public class FeatureEndpoint
-{
-    [XmlElement("Path")]
-    public string Path { get; set; } = string.Empty;
-
-    [XmlElement("Method")]
-    public string Method { get; set; } = string.Empty;
-
-    [XmlElement("RateLimit")]
-    public int RateLimit { get; set; }
-}
-
+[DataContract]
 public class ConnectionConfig
 {
-    [XmlElement("Host")]
+    [DataMember]
     public string Host { get; set; } = string.Empty;
 
-    [XmlElement("Port")]
+    [DataMember]
     public int Port { get; set; }
 
-    [XmlElement("Database")]
-    public int Database { get; set; }
-
-    [XmlElement("Ssl")]
+    [DataMember]
     public bool Ssl { get; set; }
+}
+```
+
+### Optional: Customize Element Names
+
+Override names only where needed:
+
+```csharp
+[DataContract(Name = "Feature")]
+public class FeatureConfig
+{
+    [DataMember(Name = "host")]
+    public string Host { get; set; } = string.Empty;
 }
 ```
 
 ## Autofac Module
 
-Encapsulate the loading and registration logic in an Autofac module.
-
 ```csharp
-using System.Xml.Serialization;
+using System.Runtime.Serialization;
 using Autofac;
 
 public class FeaturesModule : Module
@@ -202,101 +153,129 @@ public class FeaturesModule : Module
     {
         var options = LoadFromXml();
 
-        // Register the entire options object
         builder.RegisterInstance(options)
                .AsSelf()
                .SingleInstance();
-
-        // Optionally register individual features by name (keyed)
-        foreach (var (name, config) in options.Features)
-        {
-            builder.RegisterInstance(config)
-                   .Keyed<FeatureConfig>(name)
-                   .SingleInstance();
-        }
     }
 
     private FeaturesOptions LoadFromXml()
     {
+        var serializer = new DataContractSerializer(typeof(FeaturesOptions));
         using var stream = File.OpenRead(_xmlPath);
-        var serializer = new XmlSerializer(typeof(FeaturesOptions));
-        return (FeaturesOptions)serializer.Deserialize(stream)!;
+        return (FeaturesOptions)serializer.ReadObject(stream)!;
     }
 }
 ```
 
 ## Registration
 
-Register the module when building your container.
-
 ```csharp
 var builder = new ContainerBuilder();
-
-// Register the features module
 builder.RegisterModule(new FeaturesModule("features.xml"));
-
-// Register other services...
-builder.RegisterType<AuthService>().As<IAuthService>();
-
 var container = builder.Build();
 ```
 
 ## Usage
 
-### Inject the entire configuration
-
 ```csharp
-public class MyService
+public class AuthService
 {
-    private readonly FeaturesOptions _features;
+    private readonly FeaturesOptions _options;
 
-    public MyService(FeaturesOptions features)
+    public AuthService(FeaturesOptions options)
     {
-        _features = features;
+        _options = options;
     }
 
-    public void DoSomething()
+    public void Init()
     {
-        if (_features.Features.TryGetValue("Auth", out var authConfig) && authConfig.Enabled)
+        var auth = _options.Features.FirstOrDefault(f => f.Name == "Auth");
+        if (auth?.Enabled == true)
         {
-            // Use auth configuration
-            var timeout = authConfig.Settings
-                .FirstOrDefault(s => s.Key == "Timeout")?.Value;
+            var timeout = auth.Settings.FirstOrDefault(s => s.Key == "Timeout")?.Value;
+            var conn = auth.Connection;
+            // ...
         }
     }
 }
 ```
 
-### Resolve a specific feature by key
+## Varying Config Objects
+
+If different features have different structures, use a base class or interface:
 
 ```csharp
-// Resolve directly from container
-var authConfig = container.ResolveKeyed<FeatureConfig>("Auth");
-
-// Or inject using Autofac's keyed resolution
-public class AuthService
+[DataContract]
+[KnownType(typeof(AuthConfig))]
+[KnownType(typeof(CachingConfig))]
+public abstract class FeatureConfigBase
 {
-    private readonly FeatureConfig _config;
+    [DataMember]
+    public string Name { get; set; } = string.Empty;
 
-    public AuthService([KeyFilter("Auth")] FeatureConfig config)
-    {
-        _config = config;
-    }
+    [DataMember]
+    public bool Enabled { get; set; }
+}
+
+[DataContract]
+public class AuthConfig : FeatureConfigBase
+{
+    [DataMember]
+    public int Timeout { get; set; }
+
+    [DataMember]
+    public string Provider { get; set; } = string.Empty;
+}
+
+[DataContract]
+public class CachingConfig : FeatureConfigBase
+{
+    [DataMember]
+    public int Duration { get; set; }
+
+    [DataMember]
+    public ConnectionConfig? Connection { get; set; }
+}
+
+[DataContract]
+public class FeaturesOptions
+{
+    [DataMember]
+    public List<FeatureConfigBase> Features { get; set; } = [];
 }
 ```
 
-> **Note:** For `KeyFilter` to work, register the service with `.WithAttributeFiltering()`:
-> ```csharp
-> builder.RegisterType<AuthService>()
->        .As<IAuthService>()
->        .WithAttributeFiltering();
-> ```
+XML with type hints:
 
-## Comparison with IConfiguration
+```xml
+<FeaturesOptions xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+  <Features>
+    <FeatureConfigBase i:type="AuthConfig">
+      <Name>Auth</Name>
+      <Enabled>true</Enabled>
+      <Timeout>30</Timeout>
+      <Provider>OAuth2</Provider>
+    </FeatureConfigBase>
+    <FeatureConfigBase i:type="CachingConfig">
+      <Name>Caching</Name>
+      <Enabled>false</Enabled>
+      <Duration>600</Duration>
+      <Connection>
+        <Host>localhost</Host>
+        <Port>6379</Port>
+        <Ssl>false</Ssl>
+      </Connection>
+    </FeatureConfigBase>
+  </Features>
+</FeaturesOptions>
+```
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **IConfiguration + Custom Provider** | Works with `IOptions<T>`, supports layering/overrides from multiple sources | Everything is flattened to strings, more boilerplate |
-| **XmlSerializer + Autofac** | Strongly-typed from the start, zero parsing code, clean module encapsulation | No built-in layering, no environment variable overrides |
+## DataContract vs XmlSerializer
 
-Use `IConfiguration` when you need to merge configs from multiple sources (JSON, env vars, command line). Use `XmlSerializer` when you have a fixed XML schema and want direct object mapping.
+| | DataContract | XmlSerializer |
+|---|---|---|
+| Attributes | `[DataContract]`, `[DataMember]` | `[XmlRoot]`, `[XmlElement]`, `[XmlArray]`, etc. |
+| Default naming | Property name | Property name |
+| Polymorphism | `[KnownType]` + `i:type` attribute | `[XmlInclude]` |
+| Opt-in/out | Opt-in (only `[DataMember]` serialized) | Opt-out (all public props by default) |
+| Verbosity | Less | More |
