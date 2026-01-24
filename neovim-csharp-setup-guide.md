@@ -241,24 +241,23 @@ Use the integrated terminal:
 
 ### Custom Keybindings (VS/Rider Style)
 
-Create `~/.config/nvim/lua/config/keymaps.lua` to add Visual Studio/Rider keybindings:
+Copy the Rider keymaps file to your LazyVim config:
 
-```lua
--- Example keybindings (to be customized)
-local map = vim.keymap.set
-
--- F12 - Go to definition
-map("n", "<F12>", "<cmd>lua vim.lsp.buf.definition()<cr>", { desc = "Go to Definition" })
-
--- Shift+F12 - Find references
-map("n", "<S-F12>", "<cmd>Telescope lsp_references<cr>", { desc = "Find References" })
-
--- F2 - Rename
-map("n", "<F2>", "<cmd>lua vim.lsp.buf.rename()<cr>", { desc = "Rename Symbol" })
-
--- Ctrl+Space - Trigger completion (in insert mode)
-map("i", "<C-Space>", "<C-x><C-o>", { desc = "Trigger Completion" })
+```bash
+cp ~/repo/Docs/rider-keymaps.lua ~/.config/nvim/lua/config/keymaps.lua
 ```
+
+This gives you Rider/ReSharper keybindings including:
+- `Ctrl+T` - Go to Symbol (Rider's search)
+- `Ctrl+Shift+F` - Find in Files
+- `Alt+Enter` - Code Actions / Quick Fix
+- `F12` / `Ctrl+B` - Go to Definition
+- `Shift+F6` / `F2` - Rename
+- `Ctrl+Alt+L` - Format Code
+- `Alt+1` - File Explorer
+- `F5/F9/F10/F11` - Debug controls
+
+See `rider-keymaps.lua` for the full list.
 
 ### Enable Auto-formatting on Save
 
