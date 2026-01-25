@@ -195,13 +195,82 @@ nvim Program.cs
 - `<leader>ft` - Open floating terminal
 - `<leader>fT` - Open terminal in split
 
+### Buffer Management
+- `<leader>bd` - Close current buffer
+- `<leader>bD` - Close all buffers except current
+- `:bufdo bd` - Close all buffers
+- `:%bd` - Close all buffers (shorter)
+- `:%bd|e#` - Close all but reopen current
+- `:qa` - Quit all windows/buffers
+- `:qa!` - Quit all, discard unsaved changes
+
 ### General
 - `<leader>` is Space by default
 - `:` - Command mode
 - `/` - Search in file
 - `<Esc>` or `jk` - Exit insert mode
 
-## 6. Solution and Project Management
+## 6. File and Folder Management
+
+Use **neo-tree** (file explorer) for file operations:
+
+### Neo-tree Keybindings
+
+Open explorer with `<leader>e`, then:
+
+| Key | Action |
+|-----|--------|
+| `a` | Add file or directory (end with `/` for folder) |
+| `d` | Delete |
+| `r` | Rename |
+| `c` | Copy |
+| `m` | Move |
+| `y` | Copy path to clipboard |
+
+### Creating Files and Folders
+
+To add a folder:
+1. `<leader>e` - open explorer
+2. Navigate to parent directory
+3. `a` then type `NewFolder/` (trailing slash makes it a directory)
+
+To add a file in a new folder:
+- `a` then type `NewFolder/MyClass.cs` - creates both in one step
+
+Alternative - create from command mode:
+```vim
+:e src/NewFolder/NewClass.cs
+```
+Save with `:w` and Neovim will prompt to create the directory.
+
+---
+
+## 7. NuGet Package Management
+
+### Adding Packages
+
+From terminal (`<leader>ft`) or shell out directly:
+
+```bash
+dotnet add package StackExchange.Redis
+```
+
+Or from nvim command mode:
+```vim
+:!dotnet add package StackExchange.Redis
+```
+
+### Searching for Packages
+
+```bash
+dotnet package search Redis
+```
+
+After adding packages, OmniSharp should pick them up automatically. If not, run `:LspRestart`.
+
+---
+
+## 8. Solution and Project Management
 
 C# solution/project management is done via `dotnet` CLI:
 
@@ -237,7 +306,7 @@ Use the integrated terminal:
 - Run dotnet commands directly
 - Exit terminal: `exit` or `<C-\><C-n>` then `:q`
 
-## 7. Next Steps
+## 9. Next Steps
 
 ### Custom Keybindings (VS/Rider Style)
 
@@ -292,7 +361,7 @@ return {
 }
 ```
 
-## 8. Updating Neovim
+## 10. Updating Neovim
 
 To update to newer versions:
 
@@ -305,7 +374,7 @@ make CMAKE_BUILD_TYPE=RelWithDebInfo
 sudo make install
 ```
 
-## 9. Troubleshooting
+## 11. Troubleshooting
 
 ### LSP Not Attaching
 
@@ -337,7 +406,7 @@ Omnisharp can be slow on very large solutions. Consider:
 - Disable omnisharp for specific large files if needed
 - Use `:LspRestart` to restart the language server
 
-## 10. Additional Resources
+## 12. Additional Resources
 
 - **LazyVim Documentation:** https://www.lazyvim.org/
 - **Neovim Documentation:** `:help` in Neovim
