@@ -10,6 +10,26 @@
 set -e  # Exit on error
 
 # ============================================================================
+# FLAGS
+# ============================================================================
+MODE=""
+for arg in "$@"; do
+    case $arg in
+        --full)     MODE="full" ;;
+        --dev-only) MODE="dev" ;;
+    esac
+done
+
+if [ -z "$MODE" ]; then
+    echo "Usage: $0 <mode>"
+    echo ""
+    echo "  --full       Full setup: Hyprland, SDDM, dotfiles, dev tools, fonts, zsh, etc."
+    echo "  --dev-only   Dev tools only: .NET, Docker, EF Core, optional CLI tools"
+    echo ""
+    exit 1
+fi
+
+# ============================================================================
 # CONFIGURATION - Modify these to customize your installation
 # ============================================================================
 
@@ -44,10 +64,17 @@ INSTALL_HYPRLAND_EXTRAS=true      # Install sddm-astronaut-theme, wlopm, etc.
 # SCRIPT START - Do not modify below unless you know what you're doing
 # ============================================================================
 
+if [ "$MODE" = "full" ]; then
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║  CachyOS Unattended Setup - Hyprland Development Environment  ║"
 echo "║  This will take 10-20 minutes depending on your connection    ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
+else
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║  CachyOS Dev Environment Setup                                ║"
+echo "║  Installing: .NET, Docker, EF Core, optional CLI tools        ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+fi
 echo ""
 
 # Get sudo access upfront
@@ -87,6 +114,7 @@ else
     echo "paru installed successfully"
 fi
 
+if [ "$MODE" = "full" ]; then
 # ============================================================================
 # STEP 3/16: Install Hyprland Stack
 # ============================================================================
@@ -118,6 +146,7 @@ if [ "$INSTALL_HYPRLAND_EXTRAS" = true ]; then
     echo "Installing Hyprland extras (wlopm) from AUR..."
     paru -S --noconfirm --needed wlopm || true
 fi
+fi # end --full only
 
 # ============================================================================
 # STEP 4/16: Install Basic Dev Tools
@@ -192,6 +221,7 @@ else
     echo "Skipping Docker installation (disabled in config)"
 fi
 
+if [ "$MODE" = "full" ]; then
 # ============================================================================
 # STEP 7/16: Install Audio Stack (PipeWire)
 # ============================================================================
@@ -553,6 +583,7 @@ if [ -n "$BLUETOOTH_DEVICE_MAC" ]; then
         echo "Bluetooth auto-connect entry added to hyprland.conf"
     fi
 fi
+fi # end --full only
 
 # ============================================================================
 # STEP 14/16: Enable System Services
