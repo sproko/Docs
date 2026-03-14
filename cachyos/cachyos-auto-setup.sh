@@ -1,0 +1,656 @@
+#!/bin/bash
+# CachyOS Unattended Setup Script - Complete Hyprland Development Environment
+# Mirrors the structure of debian-auto-setup.sh, adapted for CachyOS (Arch-based)
+# Run as regular user (will prompt for sudo password once at start)
+#
+# Make executable before running:
+#   chmod +x cachyos-auto-setup.sh
+#   ./cachyos-auto-setup.sh
+
+set -e  # Exit on error
+
+# ============================================================================
+# CONFIGURATION - Modify these to customize your installation
+# ============================================================================
+
+# Git configuration
+GIT_USER_NAME="Steve P"
+GIT_USER_EMAIL="sprokopowich@proton.me"
+
+# Bluetooth device to auto-connect (set to empty string to skip)
+BLUETOOTH_DEVICE_MAC="db:b6:a2:f7:f6:e8"
+
+# Dotfiles bare repo
+DOTFILES_REPO="git@github.com:sproko/dotfiles-v2.git"
+DOTFILES_BRANCH="hyprland-arch"
+
+# Wallpaper source — copied into the SDDM theme Backgrounds/ folder
+# Can be a local path or left as the default (a plain colour fallback is used if missing)
+WALLPAPER_SOURCE="$HOME/Pictures/Arch-png-wallpapers.jpg"
+
+# Installation options
+INSTALL_DOTNET_SDK=true           # Install .NET SDK via AUR (dotnet-sdk-bin)
+INSTALL_DOTNET_VERSION="10.0"     # .NET version (8.0, 9.0, or 10.0)
+INSTALL_DOCKER=true               # Install Docker Engine
+INSTALL_EF_TOOLS=true             # Install Entity Framework CLI tools
+INSTALL_OMZ=true                  # Install Oh-My-Zsh
+INSTALL_STARSHIP=true             # Install Starship prompt (works with Oh-My-Zsh)
+INSTALL_NERD_FONTS=true           # Install Nerd Fonts via AUR
+INSTALL_BLUETOOTH=true            # Install Bluetooth stack
+INSTALL_OPTIONAL_TOOLS=true       # Install fzf, ripgrep, bat, eza, lazygit, etc.
+INSTALL_HYPRLAND_EXTRAS=true      # Install sddm-astronaut-theme, wlopm, etc.
+
+# ============================================================================
+# SCRIPT START - Do not modify below unless you know what you're doing
+# ============================================================================
+
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║  CachyOS Unattended Setup - Hyprland Development Environment  ║"
+echo "║  This will take 10-20 minutes depending on your connection    ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
+
+# Get sudo access upfront
+echo "Please enter your sudo password to begin installation..."
+sudo -v
+
+# Keep sudo alive throughout the script
+while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+
+# ============================================================================
+# STEP 1/16: System Update
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 1/16: Updating System Packages"
+echo "========================================================================"
+sudo pacman -Syu --noconfirm
+
+# ============================================================================
+# STEP 2/16: Install paru (AUR helper)
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 2/16: Installing paru (AUR Helper)"
+echo "========================================================================"
+if command -v paru &>/dev/null; then
+    echo "paru is already installed, skipping."
+else
+    echo "paru not found — cloning and building from AUR..."
+    sudo pacman -S --noconfirm --needed git base-devel
+    PARU_TMP=$(mktemp -d)
+    git clone https://aur.archlinux.org/paru.git "$PARU_TMP/paru"
+    pushd "$PARU_TMP/paru" > /dev/null
+    makepkg -si --noconfirm
+    popd > /dev/null
+    rm -rf "$PARU_TMP"
+    echo "paru installed successfully"
+fi
+
+# ============================================================================
+# STEP 3/16: Install Hyprland Stack
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 3/16: Installing Hyprland Stack (Wayland compositor + tools)"
+echo "========================================================================"
+sudo pacman -S --noconfirm --needed \
+    hyprland \
+    hyprlock \
+    hypridle \
+    hyprpaper \
+    waybar \
+    wofi \
+    alacritty \
+    swaync \
+    swww \
+    wlogout \
+    cliphist \
+    grim \
+    slurp \
+    polkit-kde-agent \
+    qt5-wayland \
+    qt6-wayland \
+    xdg-desktop-portal-hyprland \
+    xdg-user-dirs
+
+if [ "$INSTALL_HYPRLAND_EXTRAS" = true ]; then
+    echo "Installing Hyprland extras (wlopm) from AUR..."
+    paru -S --noconfirm --needed wlopm || true
+fi
+
+# ============================================================================
+# STEP 4/16: Install Basic Dev Tools
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 4/16: Installing Basic Development Tools"
+echo "========================================================================"
+sudo pacman -S --noconfirm --needed \
+    git \
+    git-lfs \
+    base-devel \
+    cmake \
+    neovim \
+    tmux \
+    htop \
+    tree \
+    curl \
+    wget \
+    unzip \
+    direnv \
+    openssh
+
+if [ "$INSTALL_OPTIONAL_TOOLS" = true ]; then
+    echo "Installing optional modern CLI tools (fzf, ripgrep, bat, eza, lazygit, fd)..."
+    sudo pacman -S --noconfirm --needed \
+        fzf \
+        ripgrep \
+        fd \
+        bat \
+        eza \
+        lazygit
+fi
+
+# ============================================================================
+# STEP 5/16: Install .NET SDK
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 5/16: Installing .NET SDK"
+echo "========================================================================"
+if [ "$INSTALL_DOTNET_SDK" = true ]; then
+    echo "Installing dotnet-sdk-${INSTALL_DOTNET_VERSION}-bin from AUR..."
+    DOTNET_PKG="dotnet-sdk-bin"
+    if [ "$INSTALL_DOTNET_VERSION" != "latest" ]; then
+        DOTNET_PKG="dotnet-sdk-${INSTALL_DOTNET_VERSION}-bin"
+    fi
+    paru -S --noconfirm --needed "$DOTNET_PKG" || {
+        echo "Versioned package not found in AUR, falling back to dotnet-sdk-bin..."
+        paru -S --noconfirm --needed dotnet-sdk-bin
+    }
+    echo ".NET SDK installed:"
+    dotnet --version
+else
+    echo "Skipping .NET SDK installation (disabled in config)"
+fi
+
+# ============================================================================
+# STEP 6/16: Install Docker
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 6/16: Installing Docker Engine"
+echo "========================================================================"
+if [ "$INSTALL_DOCKER" = true ]; then
+    sudo pacman -S --noconfirm --needed docker docker-compose
+    sudo systemctl start docker
+    sudo systemctl enable docker
+    sudo usermod -aG docker "$USER"
+    echo "Docker installed. NOTE: Log out and back in for docker group to take effect"
+else
+    echo "Skipping Docker installation (disabled in config)"
+fi
+
+# ============================================================================
+# STEP 7/16: Install Audio Stack (PipeWire)
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 7/16: Installing Audio Stack (PipeWire)"
+echo "========================================================================"
+sudo pacman -S --noconfirm --needed \
+    pipewire \
+    pipewire-pulse \
+    pipewire-alsa \
+    pipewire-jack \
+    wireplumber \
+    pavucontrol
+
+systemctl --user enable --now wireplumber.service 2>/dev/null || true
+systemctl --user enable --now pipewire.service 2>/dev/null || true
+systemctl --user enable --now pipewire-pulse.service 2>/dev/null || true
+echo "PipeWire audio stack installed"
+
+# ============================================================================
+# STEP 8/16: Install Bluetooth Stack
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 8/16: Installing Bluetooth Stack"
+echo "========================================================================"
+if [ "$INSTALL_BLUETOOTH" = true ]; then
+    sudo pacman -S --noconfirm --needed \
+        bluez \
+        bluez-utils \
+        blueman
+
+    sudo systemctl start bluetooth
+    sudo systemctl enable bluetooth
+    echo "Bluetooth stack installed"
+else
+    echo "Skipping Bluetooth installation (disabled in config)"
+fi
+
+# ============================================================================
+# STEP 9/16: Ensure NetworkManager is Active
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 9/16: Configuring NetworkManager"
+echo "========================================================================"
+if ! pacman -Q networkmanager &>/dev/null; then
+    echo "NetworkManager not found — installing..."
+    sudo pacman -S --noconfirm --needed networkmanager
+fi
+sudo systemctl enable --now NetworkManager
+echo "NetworkManager is active"
+
+# ============================================================================
+# STEP 10/16: Install Nerd Fonts
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 10/16: Installing Nerd Fonts (via AUR)"
+echo "========================================================================"
+if [ "$INSTALL_NERD_FONTS" = true ]; then
+    paru -S --noconfirm --needed \
+        ttf-jetbrains-mono-nerd \
+        ttf-ubuntu-nerd \
+        ttf-fira-code-nerd
+
+    fc-cache -fv
+    echo "Nerd Fonts installed:"
+    fc-list | grep -i "Nerd Font" | cut -d: -f2 | sort -u | head -n 6
+else
+    echo "Skipping Nerd Fonts installation (disabled in config)"
+fi
+
+# ============================================================================
+# STEP 11/16: Install zsh + Oh-My-Zsh + Starship
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 11/16: Installing zsh, Oh-My-Zsh, and Starship"
+echo "========================================================================"
+if [ "$INSTALL_OMZ" = true ]; then
+    sudo pacman -S --noconfirm --needed zsh
+
+    echo "Installing Oh-My-Zsh..."
+    export RUNZSH=no
+    export KEEP_ZSHRC=yes
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+    echo "Oh-My-Zsh installed"
+else
+    echo "Skipping Oh-My-Zsh installation (disabled in config)"
+fi
+
+if [ "$INSTALL_STARSHIP" = true ]; then
+    echo "Installing Starship prompt..."
+    curl -sS https://starship.rs/install.sh | sh -s -- -y
+    echo "Starship installed"
+else
+    echo "Skipping Starship installation (disabled in config)"
+fi
+
+# ============================================================================
+# STEP 12/16: Install SDDM + sddm-astronaut-theme (Catppuccin Mocha)
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 12/16: Installing SDDM Display Manager + Catppuccin Mocha theme"
+echo "========================================================================"
+sudo pacman -S --noconfirm --needed sddm
+
+if [ "$INSTALL_HYPRLAND_EXTRAS" = true ]; then
+    echo "Installing sddm-astronaut-theme from AUR..."
+    paru -S --noconfirm --needed sddm-astronaut-theme || true
+
+    THEME_DIR="/usr/share/sddm/themes/sddm-astronaut-theme"
+
+    if [ -d "$THEME_DIR" ]; then
+        # Copy wallpaper into theme Backgrounds folder
+        if [ -f "$WALLPAPER_SOURCE" ]; then
+            sudo cp "$WALLPAPER_SOURCE" "$THEME_DIR/Backgrounds/arch_wallpaper.jpg"
+            echo "Wallpaper copied to theme Backgrounds/"
+        else
+            echo "WARNING: Wallpaper not found at $WALLPAPER_SOURCE"
+            echo "         You will need to manually copy a wallpaper to:"
+            echo "         $THEME_DIR/Backgrounds/arch_wallpaper.jpg"
+        fi
+
+        # Write Catppuccin Mocha theme config
+        echo "Writing catppuccin_mocha.conf..."
+        sudo tee "$THEME_DIR/Themes/catppuccin_mocha.conf" > /dev/null << 'SDDMTHEME'
+[General]
+ScreenWidth="2560"
+ScreenHeight="1440"
+ScreenPadding=""
+
+Font="JetBrainsMono Nerd Font"
+FontSize="13"
+KeyboardSize="0.4"
+RoundCorners="20"
+
+Locale=""
+HourFormat="HH:mm"
+DateFormat="dddd d MMMM"
+HeaderText=""
+
+Background="Backgrounds/arch_wallpaper.jpg"
+BackgroundPlaceholder=""
+BackgroundSpeed=""
+PauseBackground=""
+DimBackground="0.5"
+CropBackground="true"
+BackgroundHorizontalAlignment="center"
+BackgroundVerticalAlignment="center"
+
+HeaderTextColor="#cdd6f4"
+DateTextColor="#cdd6f4"
+TimeTextColor="#cdd6f4"
+
+FormBackgroundColor="#1e1e2e"
+BackgroundColor="#1e1e2e"
+DimBackgroundColor="#1e1e2e"
+
+LoginFieldBackgroundColor="#313244"
+PasswordFieldBackgroundColor="#313244"
+LoginFieldTextColor="#cdd6f4"
+PasswordFieldTextColor="#cdd6f4"
+UserIconColor="#cdd6f4"
+PasswordIconColor="#cdd6f4"
+
+PlaceholderTextColor="#6c7086"
+WarningColor="#45475a"
+
+LoginButtonTextColor="#1e1e2e"
+LoginButtonBackgroundColor="#cdd6f4"
+SystemButtonsIconsColor="#cdd6f4"
+SessionButtonTextColor="#cdd6f4"
+VirtualKeyboardButtonTextColor="#cdd6f4"
+
+DropdownTextColor="#cdd6f4"
+DropdownSelectedBackgroundColor="#45475a"
+DropdownBackgroundColor="#1e1e2e"
+
+HighlightTextColor="#1e1e2e"
+HighlightBackgroundColor="#cdd6f4"
+HighlightBorderColor="#cdd6f4"
+
+HoverUserIconColor="#89b4fa"
+HoverPasswordIconColor="#89b4fa"
+HoverSystemButtonsIconsColor="#89b4fa"
+HoverSessionButtonTextColor="#89b4fa"
+HoverVirtualKeyboardButtonTextColor="#89b4fa"
+
+PartialBlur=""
+FullBlur="true"
+BlurMax="64"
+Blur="1.0"
+
+HaveFormBackground="true"
+FormPosition="center"
+
+VirtualKeyboardPosition="center"
+
+HideVirtualKeyboard="true"
+HideSystemButtons="false"
+HideLoginButton="false"
+
+ForceLastUser="true"
+PasswordFocus="true"
+HideCompletePassword="true"
+AllowEmptyPassword="false"
+AllowUppercaseLettersInUsernames="false"
+BypassSystemButtonsChecks="false"
+RightToLeftLayout="false"
+
+TranslatePlaceholderUsername=""
+TranslatePlaceholderPassword=""
+TranslateLogin=""
+TranslateLoginFailedWarning=""
+TranslateCapslockWarning=""
+TranslateSuspend=""
+TranslateHibernate=""
+TranslateReboot=""
+TranslateShutdown=""
+TranslateSessionSelection=""
+TranslateVirtualKeyboardButtonOn=""
+TranslateVirtualKeyboardButtonOff=""
+SDDMTHEME
+
+        # Point theme at catppuccin_mocha config
+        sudo sed -i 's|ConfigFile=.*|ConfigFile=Themes/catppuccin_mocha.conf|' \
+            "$THEME_DIR/metadata.desktop"
+
+        # Set SDDM to use this theme
+        sudo mkdir -p /etc/sddm.conf.d
+        sudo tee /etc/sddm.conf.d/theme.conf > /dev/null << 'SDDMCONF'
+[Theme]
+Current=sddm-astronaut-theme
+SDDMCONF
+
+        echo "Catppuccin Mocha SDDM theme configured"
+    else
+        echo "WARNING: sddm-astronaut-theme directory not found, skipping theme config"
+    fi
+fi
+
+sudo systemctl enable sddm
+echo "SDDM installed and enabled"
+
+# ============================================================================
+# STEP 13/16: Bootstrap Git Config + Clone and Apply Dotfiles
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 13/16: Cloning and Applying Dotfiles"
+echo "========================================================================"
+
+# Write a minimal gitconfig first so git clone works with correct identity.
+# This will be overwritten by the dotfiles checkout with the full config.
+echo "Writing bootstrap git config..."
+git config --global user.name "$GIT_USER_NAME"
+git config --global user.email "$GIT_USER_EMAIL"
+
+# Clone dotfiles bare repo
+if [ -d "$HOME/.dotfiles" ]; then
+    echo "Dotfiles bare repo already exists at $HOME/.dotfiles — skipping clone."
+else
+    echo "Cloning dotfiles bare repo from $DOTFILES_REPO ..."
+    git clone --bare "$DOTFILES_REPO" "$HOME/.dotfiles"
+fi
+
+echo "Checking out branch: $DOTFILES_BRANCH ..."
+if ! git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" checkout "$DOTFILES_BRANCH" 2>/dev/null; then
+    echo ""
+    echo "WARNING: Checkout had conflicts. Backing up conflicting files and retrying..."
+    BACKUP_DIR="$HOME/.dotfiles-backup-$(date +%Y%m%d%H%M%S)"
+    mkdir -p "$BACKUP_DIR"
+    CONFLICT_LIST=$(git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" checkout "$DOTFILES_BRANCH" 2>&1 \
+        | grep "^\s" | awk '{print $1}')
+    for conflict_file in $CONFLICT_LIST; do
+        target_dir="$BACKUP_DIR/$(dirname "$conflict_file")"
+        mkdir -p "$target_dir"
+        mv "$HOME/$conflict_file" "$target_dir/" 2>/dev/null || true
+    done
+    git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" checkout "$DOTFILES_BRANCH"
+    echo "Conflicting files backed up to: $BACKUP_DIR"
+fi
+
+# The full ~/.gitconfig (with delta, http retry, etc.) is now restored from dotfiles.
+
+# Hide untracked files from dotfiles status output
+git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" config --local status.showUntrackedFiles no
+echo "Dotfiles applied from branch: $DOTFILES_BRANCH"
+
+# ============================================================================
+# CONFIGURATION: zshrc + aliases
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "CONFIGURATION: Writing ~/.zshrc"
+echo "========================================================================"
+
+if [ "$INSTALL_OMZ" = true ]; then
+    cat > ~/.zshrc << 'ZSHRC'
+export ZSH="$HOME/.oh-my-zsh"
+
+ZSH_THEME="robbyrussell"
+
+plugins=(git ssh-agent)
+
+source $ZSH/oh-my-zsh.sh
+
+# .NET paths
+export DOTNET_ROOT=/usr/share/dotnet
+export PATH=$PATH:$DOTNET_ROOT:$HOME/.dotnet/tools
+
+# Local bin path
+export PATH="$HOME/.local/bin:$PATH"
+
+# SSH agent configuration
+zstyle :omz:plugins:ssh-agent identities id_ed25519
+
+# Dotfiles bare-repo alias
+alias dotfiles='git --git-dir=$HOME/.dotfiles --work-tree=$HOME'
+
+# Useful aliases
+alias ll='ls -lah'
+alias gs='git status'
+alias gp='git pull'
+
+if command -v eza &>/dev/null; then
+    alias ls='eza'
+    alias ll='eza -lah'
+fi
+
+if command -v bat &>/dev/null; then
+    alias cat='bat'
+fi
+
+# Wayland / Hyprland helpers
+alias hypr-reload='hyprctl reload'
+alias hypr-log='journalctl --user -u hyprland -n 50 --no-pager'
+ZSHRC
+
+    if [ "$INSTALL_STARSHIP" = true ]; then
+        echo 'eval "$(starship init zsh)"' >> ~/.zshrc
+    fi
+
+    chsh -s /usr/bin/zsh
+    echo "Default shell changed to zsh (will take effect on next login)"
+fi
+
+# Add Bluetooth auto-connect to hyprland.conf if MAC is configured and not already present
+if [ -n "$BLUETOOTH_DEVICE_MAC" ]; then
+    HYPR_CONF="$HOME/.config/hypr/hyprland.conf"
+    if [ -f "$HYPR_CONF" ] && ! grep -q "$BLUETOOTH_DEVICE_MAC" "$HYPR_CONF"; then
+        echo "" >> "$HYPR_CONF"
+        echo "# Auto-connect Bluetooth device on login" >> "$HYPR_CONF"
+        echo "exec-once = bluetoothctl connect ${BLUETOOTH_DEVICE_MAC}" >> "$HYPR_CONF"
+        echo "Bluetooth auto-connect entry added to hyprland.conf"
+    fi
+fi
+
+# ============================================================================
+# STEP 14/16: Enable System Services
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 14/16: Enabling System Services"
+echo "========================================================================"
+sudo systemctl enable --now sddm           2>/dev/null || true
+sudo systemctl enable --now NetworkManager  2>/dev/null || true
+sudo systemctl enable --now sshd            2>/dev/null || true
+
+[ "$INSTALL_DOCKER" = true ]    && sudo systemctl enable --now docker    2>/dev/null || true
+[ "$INSTALL_BLUETOOTH" = true ] && sudo systemctl enable --now bluetooth 2>/dev/null || true
+
+echo "System services enabled"
+
+# ============================================================================
+# STEP 15/16: Install EF Core Tools
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 15/16: Installing Entity Framework Core CLI Tools"
+echo "========================================================================"
+if [ "$INSTALL_EF_TOOLS" = true ] && [ "$INSTALL_DOTNET_SDK" = true ]; then
+    dotnet tool install --global dotnet-ef 2>/dev/null || dotnet tool update --global dotnet-ef
+
+    if ! grep -q "/.dotnet/tools" ~/.zshrc 2>/dev/null; then
+        echo 'export PATH="$PATH:$HOME/.dotnet/tools"' >> ~/.zshrc
+    fi
+    echo "EF Core tools installed"
+else
+    echo "Skipping EF Core tools (disabled in config or .NET SDK not installed)"
+fi
+
+# ============================================================================
+# STEP 16/16: Cleanup and Final Summary
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "STEP 16/16: Cleaning Up"
+echo "========================================================================"
+sudo pacman -Sc --noconfirm 2>/dev/null || true
+echo "Package cache cleaned"
+
+echo ""
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║                    INSTALLATION COMPLETE!                      ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
+echo "Summary of installed components:"
+echo "  + Hyprland (Wayland compositor) + waybar + wofi + alacritty"
+echo "  + swaync + swww + hyprlock + hypridle + hyprpaper + wlogout"
+echo "  + cliphist + grim + slurp + polkit-kde-agent"
+[ "$INSTALL_HYPRLAND_EXTRAS" = true ]  && echo "  + wlopm (screen power management)"
+echo "  + Development tools (git, base-devel, neovim, tmux, cmake, curl, wget)"
+[ "$INSTALL_OPTIONAL_TOOLS" = true ]   && echo "  + Modern CLI tools (fzf, ripgrep, fd, bat, eza, lazygit)"
+[ "$INSTALL_DOTNET_SDK" = true ]       && echo "  + .NET ${INSTALL_DOTNET_VERSION} SDK"
+[ "$INSTALL_DOCKER" = true ]           && echo "  + Docker Engine + docker-compose"
+[ "$INSTALL_EF_TOOLS" = true ] && [ "$INSTALL_DOTNET_SDK" = true ] && echo "  + Entity Framework Core CLI tools"
+echo "  + PipeWire (pipewire-pulse, wireplumber, pavucontrol)"
+[ "$INSTALL_BLUETOOTH" = true ]        && echo "  + Bluetooth (bluez, bluez-utils, blueman)"
+[ "$INSTALL_NERD_FONTS" = true ]       && echo "  + Nerd Fonts (JetBrainsMono, Ubuntu, FiraCode)"
+[ "$INSTALL_OMZ" = true ]              && echo "  + zsh + Oh-My-Zsh"
+[ "$INSTALL_STARSHIP" = true ]         && echo "  + Starship prompt"
+echo "  + SDDM display manager"
+[ "$INSTALL_HYPRLAND_EXTRAS" = true ]  && echo "  + sddm-astronaut-theme (Catppuccin Mocha)"
+echo ""
+echo "Dotfiles configured:"
+echo "  + Bare repo cloned to ~/.dotfiles (branch: ${DOTFILES_BRANCH})"
+echo "  + Full ~/.gitconfig restored from dotfiles (delta, http retry, etc.)"
+[ "$INSTALL_OMZ" = true ] && echo "  + zsh with Oh-My-Zsh and Starship (~/.zshrc)"
+echo "  + 'dotfiles' alias available in zsh"
+echo ""
+echo "Next steps:"
+echo "  1. REBOOT your system:  sudo reboot"
+echo "  2. You will land on the SDDM login screen (Catppuccin Mocha theme)"
+echo "  3. Login with your username and password"
+echo "  4. Hyprland will start automatically"
+echo ""
+echo "Hyprland quick reference (Super = Windows/Meta key):"
+echo "  Super+Enter          = Open Alacritty terminal"
+echo "  Super+D              = Application launcher (wofi)"
+echo "  Super+Shift+Q        = Close window"
+echo "  Super+Shift+E        = Exit Hyprland (wlogout)"
+echo "  Super+backslash      = Lock screen (hyprlock)"
+echo "  Super+Shift+C        = Reload Hyprland config"
+echo "  Super+1 to Super+9   = Switch workspaces"
+echo "  Super+Shift+1 to 9   = Move window to workspace"
+echo "  Print                = Screenshot (full screen)"
+echo "  Super+Shift+S        = Screenshot (selection)"
+echo ""
+[ "$INSTALL_DOCKER" = true ] && echo "NOTE: For Docker without sudo, log out and back in!"
+echo ""
+echo "Dotfiles alias:"
+echo "  dotfiles status"
+echo "  dotfiles add ~/.config/hypr/hyprland.conf"
+echo "  dotfiles commit -m 'update config'"
+echo "  dotfiles push"
+echo ""
+echo "Enjoy your new CachyOS Hyprland development environment!"
