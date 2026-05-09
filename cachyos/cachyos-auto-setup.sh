@@ -189,15 +189,14 @@ echo "========================================================================"
 echo "STEP 5/16: Installing .NET SDK"
 echo "========================================================================"
 if [ "$INSTALL_DOTNET_SDK" = true ]; then
-    echo "Installing dotnet-sdk-${INSTALL_DOTNET_VERSION}-bin from AUR..."
-    DOTNET_PKG="dotnet-sdk-bin"
-    if [ "$INSTALL_DOTNET_VERSION" != "latest" ]; then
-        DOTNET_PKG="dotnet-sdk-${INSTALL_DOTNET_VERSION}-bin"
-    fi
-    paru -S --noconfirm --needed "$DOTNET_PKG" || {
-        echo "Versioned package not found in AUR, falling back to dotnet-sdk-bin..."
-        paru -S --noconfirm --needed dotnet-sdk-bin
-    }
+    # Versioned AUR packages (dotnet-sdk-8.0-bin, dotnet-sdk-9.0-bin) exist for LTS only.
+    # For the current release (10+), dotnet-sdk-bin is the right package.
+    case "$INSTALL_DOTNET_VERSION" in
+        8.0|9.0) DOTNET_PKG="dotnet-sdk-${INSTALL_DOTNET_VERSION}-bin" ;;
+        *)       DOTNET_PKG="dotnet-sdk-bin" ;;
+    esac
+    echo "Installing $DOTNET_PKG from AUR..."
+    paru -S --noconfirm --needed "$DOTNET_PKG"
     echo ".NET SDK installed:"
     dotnet --version
 else
