@@ -229,6 +229,7 @@ echo ""
 echo "========================================================================"
 echo "STEP 7/16: Installing Audio Stack (PipeWire)"
 echo "========================================================================"
+sudo pacman -Rdd --noconfirm jack 2>/dev/null || true
 sudo pacman -S --noconfirm --needed \
     pipewire \
     pipewire-pulse \
