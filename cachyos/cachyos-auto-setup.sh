@@ -288,7 +288,7 @@ if [ "$INSTALL_NERD_FONTS" = true ]; then
     paru -S --noconfirm --needed \
         ttf-jetbrains-mono-nerd \
         ttf-ubuntu-nerd \
-        ttf-fira-code-nerd
+        ttf-firacode-nerd
 
     fc-cache -fv
     echo "Nerd Fonts installed:"
