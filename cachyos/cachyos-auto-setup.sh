@@ -44,9 +44,9 @@ BLUETOOTH_DEVICE_MAC="db:b6:a2:f7:f6:e8"
 DOTFILES_REPO="git@github.com:sproko/dotfiles-v2.git"
 DOTFILES_BRANCH="hyprland-arch"
 
-# Wallpaper source — copied into the SDDM theme Backgrounds/ folder
-# Can be a local path or left as the default (a plain colour fallback is used if missing)
-WALLPAPER_SOURCE="$HOME/Pictures/Arch-png-wallpapers.jpg"
+# Wallpaper source — resolved relative to this script so the repo ships the image
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WALLPAPER_SOURCE="$SCRIPT_DIR/../Backgrounds/Arch-png-wallpapers.jpg"
 
 # Installation options
 INSTALL_DOTNET_SDK=true           # Install .NET SDK via AUR (dotnet-sdk-bin)
@@ -339,14 +339,17 @@ if [ "$INSTALL_HYPRLAND_EXTRAS" = true ]; then
     THEME_DIR="/usr/share/sddm/themes/sddm-astronaut-theme"
 
     if [ -d "$THEME_DIR" ]; then
-        # Copy wallpaper into theme Backgrounds folder
+        # Copy wallpaper into theme Backgrounds folder and ~/Pictures for hyprpaper
         if [ -f "$WALLPAPER_SOURCE" ]; then
             sudo cp "$WALLPAPER_SOURCE" "$THEME_DIR/Backgrounds/arch_wallpaper.jpg"
-            echo "Wallpaper copied to theme Backgrounds/"
+            mkdir -p "$HOME/Pictures"
+            cp "$WALLPAPER_SOURCE" "$HOME/Pictures/arch_wallpaper.jpg"
+            echo "Wallpaper copied to theme Backgrounds/ and ~/Pictures/"
         else
             echo "WARNING: Wallpaper not found at $WALLPAPER_SOURCE"
             echo "         You will need to manually copy a wallpaper to:"
             echo "         $THEME_DIR/Backgrounds/arch_wallpaper.jpg"
+            echo "         $HOME/Pictures/arch_wallpaper.jpg"
         fi
 
         # Write Catppuccin Mocha theme config
@@ -514,6 +517,41 @@ fi
 # Hide untracked files from dotfiles status output
 git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" config --local status.showUntrackedFiles no
 echo "Dotfiles applied from branch: $DOTFILES_BRANCH"
+
+# ============================================================================
+# CONFIGURATION: hyprpaper (desktop wallpaper)
+# ============================================================================
+echo ""
+echo "========================================================================"
+echo "CONFIGURATION: Setting up hyprpaper desktop wallpaper"
+echo "========================================================================"
+HYPR_CONF_DIR="$HOME/.config/hypr"
+HYPRPAPER_CONF="$HYPR_CONF_DIR/hyprpaper.conf"
+HYPRLAND_CONF="$HYPR_CONF_DIR/hyprland.conf"
+WALLPAPER_DEST="$HOME/Pictures/arch_wallpaper.jpg"
+
+# Fall back to source image if Pictures copy didn't happen (e.g. SDDM extras disabled)
+if [ ! -f "$WALLPAPER_DEST" ] && [ -f "$WALLPAPER_SOURCE" ]; then
+    mkdir -p "$HOME/Pictures"
+    cp "$WALLPAPER_SOURCE" "$WALLPAPER_DEST"
+fi
+
+if [ ! -f "$HYPRPAPER_CONF" ]; then
+    mkdir -p "$HYPR_CONF_DIR"
+    cat > "$HYPRPAPER_CONF" << HYPRPAPER
+preload = $WALLPAPER_DEST
+wallpaper = ,$WALLPAPER_DEST
+splash = false
+HYPRPAPER
+    echo "hyprpaper.conf written → $HYPRPAPER_CONF"
+else
+    echo "hyprpaper.conf already exists (from dotfiles) — skipping"
+fi
+
+if [ -f "$HYPRLAND_CONF" ] && ! grep -q "exec-once = hyprpaper" "$HYPRLAND_CONF"; then
+    printf '\n# Wallpaper daemon\nexec-once = hyprpaper\n' >> "$HYPRLAND_CONF"
+    echo "exec-once = hyprpaper added to hyprland.conf"
+fi
 
 # ============================================================================
 # CONFIGURATION: zshrc + aliases
