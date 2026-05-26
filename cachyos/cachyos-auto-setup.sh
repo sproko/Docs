@@ -228,7 +228,7 @@ echo ""
 echo "========================================================================"
 echo "STEP 7/16: Installing Audio Stack (PipeWire)"
 echo "========================================================================"
-sudo pacman -Rdd --noconfirm jack 2>/dev/null || true
+sudo pacman -Rdd --noconfirm jack jack2 2>/dev/null || true
 sudo pacman -S --noconfirm --needed \
     pipewire \
     pipewire-pulse \
@@ -516,6 +516,14 @@ fi
 
 # Hide untracked files from dotfiles status output
 git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" config --local status.showUntrackedFiles no
+
+# Add fetch refspec so 'git fetch' retrieves all remote branches (bare clones omit this)
+git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" fetch origin
+
+# Track the remote branch so 'dotfiles push/pull' works without explicit remote/branch
+git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" branch --set-upstream-to="origin/$DOTFILES_BRANCH" "$DOTFILES_BRANCH"
+
 echo "Dotfiles applied from branch: $DOTFILES_BRANCH"
 
 # ============================================================================
