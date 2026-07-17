@@ -43,6 +43,10 @@ BLUETOOTH_DEVICE_MAC="db:b6:a2:f7:f6:e8"
 # Dotfiles bare repo
 DOTFILES_REPO="git@github.com:sproko/dotfiles-v2.git"
 DOTFILES_BRANCH="hyprland-arch"
+# SSH key to use for the dotfiles clone (a sproko/personal repo). If this file
+# exists it's forced for the clone, so it works even on a machine whose default
+# github.com key is a different account. Empty = use whatever ssh picks.
+DOTFILES_SSH_KEY="$HOME/.ssh/id_ed25519_personal"
 
 # Wallpaper source — resolved relative to this script so the repo ships the image
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,6 +80,20 @@ echo "║  Installing: .NET, Docker, EF Core, optional CLI tools        ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 fi
 echo ""
+
+# ============================================================================
+# SAFETY GUARDS - Detect an already-configured machine so we don't clobber it
+# ============================================================================
+# If this box already has the two-account git setup or a customized login
+# shell, we preserve them instead of overwriting with the dotfiles/zsh defaults.
+PRESERVE_GITCONFIG=false
+if [ -f "$HOME/.gitconfig" ] && grep -q 'includeIf' "$HOME/.gitconfig" 2>/dev/null; then
+    PRESERVE_GITCONFIG=true
+    echo "GUARD: existing ~/.gitconfig with includeIf detected — it will be preserved."
+fi
+
+# Login shell from passwd (not $SHELL, which is whatever ran this script).
+CURRENT_LOGIN_SHELL="$(getent passwd "$USER" | cut -d: -f7)"
 
 # Get sudo access upfront
 echo "Please enter your sudo password to begin installation..."
@@ -483,16 +501,29 @@ echo "========================================================================"
 
 # Write a minimal gitconfig first so git clone works with correct identity.
 # This will be overwritten by the dotfiles checkout with the full config.
-echo "Writing bootstrap git config..."
-git config --global user.name "$GIT_USER_NAME"
-git config --global user.email "$GIT_USER_EMAIL"
+if [ "$PRESERVE_GITCONFIG" = true ]; then
+    echo "GUARD: preserving existing two-account ~/.gitconfig — skipping bootstrap identity."
+    cp -a "$HOME/.gitconfig" "/tmp/gitconfig.preserve.$$"
+    [ -f "$HOME/.gitconfig-personal" ] && cp -a "$HOME/.gitconfig-personal" "/tmp/gitconfig-personal.preserve.$$"
+else
+    echo "Writing bootstrap git config..."
+    git config --global user.name "$GIT_USER_NAME"
+    git config --global user.email "$GIT_USER_EMAIL"
+fi
+
+# Force the personal key for the dotfiles clone (it's a sproko repo), so this
+# works even where github.com defaults to a different account's key.
+DOTFILES_GIT_SSH=""
+if [ -n "$DOTFILES_SSH_KEY" ] && [ -f "$DOTFILES_SSH_KEY" ]; then
+    DOTFILES_GIT_SSH="ssh -i $DOTFILES_SSH_KEY -o IdentitiesOnly=yes -o IdentityAgent=none"
+fi
 
 # Clone dotfiles bare repo
 if [ -d "$HOME/.dotfiles" ]; then
     echo "Dotfiles bare repo already exists at $HOME/.dotfiles — skipping clone."
 else
     echo "Cloning dotfiles bare repo from $DOTFILES_REPO ..."
-    git clone --bare "$DOTFILES_REPO" "$HOME/.dotfiles"
+    GIT_SSH_COMMAND="$DOTFILES_GIT_SSH" git clone --bare "$DOTFILES_REPO" "$HOME/.dotfiles"
 fi
 
 echo "Checking out branch: $DOTFILES_BRANCH ..."
@@ -517,6 +548,12 @@ fi
 # Hide untracked files from dotfiles status output
 git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" config --local status.showUntrackedFiles no
 
+# Pin the personal key on the dotfiles repo so fetch/push/pull (and the
+# 'dotfiles' alias) always talk to sproko regardless of the global git config.
+if [ -n "$DOTFILES_GIT_SSH" ]; then
+    git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" config --local core.sshCommand "$DOTFILES_GIT_SSH"
+fi
+
 # Add fetch refspec so 'git fetch' retrieves all remote branches (bare clones omit this)
 git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" fetch origin
@@ -525,6 +562,16 @@ git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" fetch origin
 git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" branch --set-upstream-to="origin/$DOTFILES_BRANCH" "$DOTFILES_BRANCH"
 
 echo "Dotfiles applied from branch: $DOTFILES_BRANCH"
+
+# Restore the two-account git config the dotfiles checkout just overwrote.
+if [ "$PRESERVE_GITCONFIG" = true ]; then
+    cp -a "/tmp/gitconfig.preserve.$$" "$HOME/.gitconfig" && rm -f "/tmp/gitconfig.preserve.$$"
+    if [ -f "/tmp/gitconfig-personal.preserve.$$" ]; then
+        cp -a "/tmp/gitconfig-personal.preserve.$$" "$HOME/.gitconfig-personal"
+        rm -f "/tmp/gitconfig-personal.preserve.$$"
+    fi
+    echo "GUARD: restored existing two-account ~/.gitconfig (+ ~/.gitconfig-personal)."
+fi
 
 # ============================================================================
 # CONFIGURATION: hyprpaper (desktop wallpaper)
@@ -570,6 +617,11 @@ echo "CONFIGURATION: Writing ~/.zshrc"
 echo "========================================================================"
 
 if [ "$INSTALL_OMZ" = true ]; then
+    # Back up an existing ~/.zshrc rather than clobbering it silently.
+    if [ -f ~/.zshrc ]; then
+        cp -a ~/.zshrc "$HOME/.zshrc.bak.$(date +%Y%m%d%H%M%S)"
+        echo "GUARD: backed up existing ~/.zshrc"
+    fi
     cat > ~/.zshrc << 'ZSHRC'
 export ZSH="$HOME/.oh-my-zsh"
 
@@ -615,8 +667,17 @@ ZSHRC
         echo 'eval "$(starship init zsh)"' >> ~/.zshrc
     fi
 
-    chsh -s /usr/bin/zsh
-    echo "Default shell changed to zsh (will take effect on next login)"
+    # Only change the login shell if it's still a default (bash/sh). If the user
+    # already runs fish/zsh/etc., leave it alone. sudo avoids an interactive prompt.
+    case "$CURRENT_LOGIN_SHELL" in
+        */bash|*/sh|"")
+            sudo chsh -s /usr/bin/zsh "$USER"
+            echo "Default shell changed to zsh (will take effect on next login)"
+            ;;
+        *)
+            echo "GUARD: login shell is already '$CURRENT_LOGIN_SHELL' — leaving it unchanged."
+            ;;
+    esac
 fi
 
 # Add Bluetooth auto-connect to hyprland.conf if MAC is configured and not already present
@@ -638,7 +699,7 @@ echo ""
 echo "========================================================================"
 echo "STEP 14/16: Enabling System Services"
 echo "========================================================================"
-sudo systemctl enable --now sddm           2>/dev/null || true
+[ "$MODE" = "full" ] && sudo systemctl enable --now sddm 2>/dev/null || true
 sudo systemctl enable --now NetworkManager  2>/dev/null || true
 sudo systemctl enable --now sshd            2>/dev/null || true
 
@@ -681,15 +742,18 @@ echo "║                    INSTALLATION COMPLETE!                      ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Summary of installed components:"
+if [ "$MODE" = "full" ]; then
 echo "  + Hyprland (Wayland compositor) + waybar + wofi + alacritty"
 echo "  + swaync + swww + hyprlock + hypridle + hyprpaper + wlogout"
 echo "  + cliphist + grim + slurp + polkit-kde-agent"
 [ "$INSTALL_HYPRLAND_EXTRAS" = true ]  && echo "  + wlopm (screen power management)"
+fi
 echo "  + Development tools (git, base-devel, neovim, tmux, cmake, curl, wget)"
 [ "$INSTALL_OPTIONAL_TOOLS" = true ]   && echo "  + Modern CLI tools (fzf, ripgrep, fd, bat, eza, lazygit)"
 [ "$INSTALL_DOTNET_SDK" = true ]       && echo "  + .NET ${INSTALL_DOTNET_VERSION} SDK"
 [ "$INSTALL_DOCKER" = true ]           && echo "  + Docker Engine + docker-compose"
 [ "$INSTALL_EF_TOOLS" = true ] && [ "$INSTALL_DOTNET_SDK" = true ] && echo "  + Entity Framework Core CLI tools"
+if [ "$MODE" = "full" ]; then
 echo "  + PipeWire (pipewire-pulse, wireplumber, pavucontrol)"
 [ "$INSTALL_BLUETOOTH" = true ]        && echo "  + Bluetooth (bluez, bluez-utils, blueman)"
 [ "$INSTALL_NERD_FONTS" = true ]       && echo "  + Nerd Fonts (JetBrainsMono, Ubuntu, FiraCode)"
@@ -700,34 +764,47 @@ echo "  + SDDM display manager"
 echo ""
 echo "Dotfiles configured:"
 echo "  + Bare repo cloned to ~/.dotfiles (branch: ${DOTFILES_BRANCH})"
-echo "  + Full ~/.gitconfig restored from dotfiles (delta, http retry, etc.)"
+[ "$PRESERVE_GITCONFIG" = true ] \
+    && echo "  + Existing two-account ~/.gitconfig preserved (dotfiles version skipped)" \
+    || echo "  + Full ~/.gitconfig restored from dotfiles (delta, http retry, etc.)"
 [ "$INSTALL_OMZ" = true ] && echo "  + zsh with Oh-My-Zsh and Starship (~/.zshrc)"
 echo "  + 'dotfiles' alias available in zsh"
+fi
 echo ""
-echo "Next steps:"
-echo "  1. REBOOT your system:  sudo reboot"
-echo "  2. You will land on the SDDM login screen (Catppuccin Mocha theme)"
-echo "  3. Login with your username and password"
-echo "  4. Hyprland will start automatically"
-echo ""
-echo "Hyprland quick reference (Super = Windows/Meta key):"
-echo "  Super+Enter          = Open Alacritty terminal"
-echo "  Super+D              = Application launcher (wofi)"
-echo "  Super+Shift+Q        = Close window"
-echo "  Super+Shift+E        = Exit Hyprland (wlogout)"
-echo "  Super+backslash      = Lock screen (hyprlock)"
-echo "  Super+Shift+C        = Reload Hyprland config"
-echo "  Super+1 to Super+9   = Switch workspaces"
-echo "  Super+Shift+1 to 9   = Move window to workspace"
-echo "  Print                = Screenshot (full screen)"
-echo "  Super+Shift+S        = Screenshot (selection)"
-echo ""
-[ "$INSTALL_DOCKER" = true ] && echo "NOTE: For Docker without sudo, log out and back in!"
-echo ""
-echo "Dotfiles alias:"
-echo "  dotfiles status"
-echo "  dotfiles add ~/.config/hypr/hyprland.conf"
-echo "  dotfiles commit -m 'update config'"
-echo "  dotfiles push"
-echo ""
-echo "Enjoy your new CachyOS Hyprland development environment!"
+
+if [ "$MODE" = "full" ]; then
+    echo "Next steps:"
+    echo "  1. REBOOT your system:  sudo reboot"
+    echo "  2. You will land on the SDDM login screen (Catppuccin Mocha theme)"
+    echo "  3. Login with your username and password"
+    echo "  4. Hyprland will start automatically"
+    echo ""
+    echo "Hyprland quick reference (Super = Windows/Meta key):"
+    echo "  Super+Enter          = Open Alacritty terminal"
+    echo "  Super+D              = Application launcher (wofi)"
+    echo "  Super+Shift+Q        = Close window"
+    echo "  Super+Shift+E        = Exit Hyprland (wlogout)"
+    echo "  Super+backslash      = Lock screen (hyprlock)"
+    echo "  Super+Shift+C        = Reload Hyprland config"
+    echo "  Super+1 to Super+9   = Switch workspaces"
+    echo "  Super+Shift+1 to 9   = Move window to workspace"
+    echo "  Print                = Screenshot (full screen)"
+    echo "  Super+Shift+S        = Screenshot (selection)"
+    echo ""
+    [ "$INSTALL_DOCKER" = true ] && echo "NOTE: For Docker without sudo, log out and back in!"
+    echo ""
+    echo "Dotfiles alias:"
+    echo "  dotfiles status"
+    echo "  dotfiles add ~/.config/hypr/hyprland.conf"
+    echo "  dotfiles commit -m 'update config'"
+    echo "  dotfiles push"
+    echo ""
+    echo "Enjoy your new CachyOS Hyprland development environment!"
+else
+    echo "Next steps:"
+    [ "$INSTALL_DOCKER" = true ] && echo "  - Docker: log out and back in so the 'docker' group takes effect."
+    [ "$INSTALL_DOTNET_SDK" = true ] && echo "  - .NET: open a new shell (PATH now includes ~/.dotnet/tools for EF etc.)."
+    echo "  - Dev tools installed. No reboot required."
+    echo ""
+    echo "Dev environment ready."
+fi
