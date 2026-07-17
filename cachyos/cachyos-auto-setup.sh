@@ -42,7 +42,7 @@ BLUETOOTH_DEVICE_MAC="db:b6:a2:f7:f6:e8"
 
 # Dotfiles bare repo
 DOTFILES_REPO="git@github.com:sproko/dotfiles-v2.git"
-DOTFILES_BRANCH="hyprland-arch"
+DOTFILES_BRANCH="noctalia-cachyos"
 # SSH key to use for the dotfiles clone (a sproko/personal repo). If this file
 # exists it's forced for the clone, so it works even on a machine whose default
 # github.com key is a different account. Empty = use whatever ssh picks.
