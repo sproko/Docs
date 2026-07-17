@@ -13,18 +13,23 @@ set -e  # Exit on error
 # FLAGS
 # ============================================================================
 MODE=""
+DOTFILES_BRANCH_ARG=""
 for arg in "$@"; do
     case $arg in
-        --full)     MODE="full" ;;
-        --dev-only) MODE="dev" ;;
+        --full)                MODE="full" ;;
+        --dev-only)            MODE="dev" ;;
+        --dotfiles-branch=*)   DOTFILES_BRANCH_ARG="${arg#*=}" ;;
     esac
 done
 
 if [ -z "$MODE" ]; then
-    echo "Usage: $0 <mode>"
+    echo "Usage: $0 <mode> [--dotfiles-branch=NAME]"
     echo ""
-    echo "  --full       Full setup: Hyprland, SDDM, dotfiles, dev tools, fonts, zsh, etc."
-    echo "  --dev-only   Dev tools only: .NET, Docker, EF Core, optional CLI tools"
+    echo "  --full                  Full setup: Hyprland, SDDM, dotfiles, dev tools, fonts, zsh, etc."
+    echo "  --dev-only              Dev tools only: .NET, Docker, EF Core, optional CLI tools"
+    echo ""
+    echo "  --dotfiles-branch=NAME  (full mode) Use this dotfiles branch without prompting."
+    echo "                          Omit to be shown a menu of available branches."
     echo ""
     exit 1
 fi
@@ -42,7 +47,11 @@ BLUETOOTH_DEVICE_MAC="db:b6:a2:f7:f6:e8"
 
 # Dotfiles bare repo
 DOTFILES_REPO="git@github.com:sproko/dotfiles-v2.git"
-DOTFILES_BRANCH="noctalia-cachyos"
+# Which dotfiles branch to check out. Different machines use different branches
+# (e.g. hyprland-arch = .conf/waybar setup, noctalia-cachyos = Noctalia/Lua).
+# Leave empty to be prompted with a menu; --dotfiles-branch=NAME overrides.
+DOTFILES_BRANCH=""
+[ -n "$DOTFILES_BRANCH_ARG" ] && DOTFILES_BRANCH="$DOTFILES_BRANCH_ARG"
 # SSH key to use for the dotfiles clone (a sproko/personal repo). If this file
 # exists it's forced for the clone, so it works even on a machine whose default
 # github.com key is a different account. Empty = use whatever ssh picks.
@@ -516,6 +525,54 @@ fi
 DOTFILES_GIT_SSH=""
 if [ -n "$DOTFILES_SSH_KEY" ] && [ -f "$DOTFILES_SSH_KEY" ]; then
     DOTFILES_GIT_SSH="ssh -i $DOTFILES_SSH_KEY -o IdentitiesOnly=yes -o IdentityAgent=none"
+fi
+
+# Resolve which dotfiles branch to check out. If not set via --dotfiles-branch,
+# list the remote branches and prompt (this machine's likely branch is suggested).
+if [ -z "$DOTFILES_BRANCH" ]; then
+    echo "Fetching available dotfiles branches from $DOTFILES_REPO ..."
+    mapfile -t DF_BRANCHES < <(GIT_SSH_COMMAND="$DOTFILES_GIT_SSH" \
+        git ls-remote --heads "$DOTFILES_REPO" 2>/dev/null | sed 's#.*refs/heads/##')
+    if [ "${#DF_BRANCHES[@]}" -eq 0 ]; then
+        echo "ERROR: could not list branches (check SSH access to $DOTFILES_REPO)."
+        exit 1
+    fi
+
+    # Suggest a sensible default for this machine.
+    DF_DEFAULT=""
+    if pacman -Q cachyos-hypr-noctalia &>/dev/null; then
+        for b in "${DF_BRANCHES[@]}"; do [ "$b" = "noctalia-cachyos" ] && DF_DEFAULT="$b"; done
+    fi
+
+    echo ""
+    echo "Available dotfiles branches:"
+    idx=1
+    for b in "${DF_BRANCHES[@]}"; do
+        suffix=""; [ "$b" = "$DF_DEFAULT" ] && suffix="  <- suggested for this machine"
+        printf "  %d) %s%s\n" "$idx" "$b" "$suffix"
+        idx=$((idx + 1))
+    done
+
+    while [ -z "$DOTFILES_BRANCH" ]; do
+        if [ -n "$DF_DEFAULT" ]; then
+            printf "Select branch number, type a name, or Enter for '%s': " "$DF_DEFAULT"
+        else
+            printf "Select branch number or type a name: "
+        fi
+        read -r sel
+        if [ -z "$sel" ] && [ -n "$DF_DEFAULT" ]; then
+            DOTFILES_BRANCH="$DF_DEFAULT"
+        elif [[ "$sel" =~ ^[0-9]+$ ]]; then
+            if [ "$sel" -ge 1 ] && [ "$sel" -le "${#DF_BRANCHES[@]}" ]; then
+                DOTFILES_BRANCH="${DF_BRANCHES[$((sel - 1))]}"
+            else
+                echo "  '$sel' is out of range — try again."
+            fi
+        elif [ -n "$sel" ]; then
+            DOTFILES_BRANCH="$sel"   # typed a branch name directly
+        fi
+    done
+    echo "Using dotfiles branch: $DOTFILES_BRANCH"
 fi
 
 # Clone dotfiles bare repo
