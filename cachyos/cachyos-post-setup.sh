@@ -53,6 +53,14 @@ PERSONAL_SSH_ALIAS="github.com-personal"
 PERSONAL_GH_USER="sproko"
 PERSONAL_GH_CONFIG="$HOME/.config/gh-personal"
 
+# Inbound SSH. Scoped to the home LAN rather than opened globally: these are
+# laptops that end up on café and hotel wifi, where a plain `ufw allow 22` would
+# expose the port to everyone else on that network. Deliberately a constant and
+# not auto-detected — detecting at run time would happily open SSH to whatever
+# network the machine is sitting on. Find the value with `ip -4 route show scope
+# link`. Set to 0.0.0.0/0 to open it fully.
+SSH_LAN_CIDR="192.168.1.0/24"
+
 CLAUDE_CONFIG_DIR="$HOME/repo/claude-config"
 # -C "$HOME" matters: without it, status prints paths relative to wherever the
 # script was invoked from ("../../.config/…"), which is noise in a report.
@@ -73,6 +81,16 @@ FAILURES=()
 ok()   { printf '  %s✓%s %s\n' "$C_OK" "$C_OFF" "$1"; PASS=$((PASS + 1)); }
 bad()  { printf '  %s✗%s %s\n' "$C_BAD" "$C_OFF" "$1"; FAIL=$((FAIL + 1)); FAILURES+=("$1"); }
 warn() { printf '  %s!%s %s\n' "$C_WARN" "$C_OFF" "$1"; WARN=$((WARN + 1)); }
+
+# Any ufw rule opening port 22. Reads the rules file rather than `ufw status`,
+# which needs root — this keeps the check phase unprivileged. ufw records each
+# rule as a "### tuple ###" line, written by backend_iptables.py as:
+#   ### tuple ### <action> <protocol> <dport> <dst> <sport> <src> [...]
+# so with the three "### tuple ###" tokens counted, dport is $6 and src is $9.
+ufw_ssh_rule() {
+    grep -h '^### tuple ###' /etc/ufw/user.rules /etc/ufw/user6.rules 2>/dev/null \
+        | awk '$6 == "22"'
+}
 
 section() {
     echo ""
@@ -103,6 +121,23 @@ if [ "$CHECK_ONLY" = false ]; then
         done
     else
         echo "  direnv not installed — skipping (install it, then re-run)"
+    fi
+
+    # cachyos-auto-setup.sh enables sshd, but ufw defaults to DROP on input with
+    # no rule for 22, so sshd ends up running and unreachable — nothing in either
+    # script's output says so.
+    if command -v ufw &>/dev/null && [ -n "$SSH_LAN_CIDR" ]; then
+        if [ -n "$(ufw_ssh_rule)" ]; then
+            echo "  ufw: a rule for :22 already exists — leaving it alone"
+        else
+            echo "  ufw: allowing SSH from $SSH_LAN_CIDR (sudo may prompt)..."
+            if sudo ufw allow from "$SSH_LAN_CIDR" to any port 22 proto tcp; then
+                echo "  ufw: SSH allowed from $SSH_LAN_CIDR"
+            else
+                echo "  WARNING: ufw rule failed — add by hand:"
+                echo "           sudo ufw allow from $SSH_LAN_CIDR to any port 22 proto tcp"
+            fi
+        fi
     fi
 
     # install.sh regenerates CLAUDE.machine.md, which records the dotfiles branch.
@@ -252,6 +287,43 @@ if command -v noctalia &>/dev/null; then
     else
         warn "noctalia config validate said: $(head -1 <<< "$nout")"
     fi
+fi
+
+# ============================================================================
+# CHECKS: remote access
+# ============================================================================
+section "CHECKS: remote access (sshd + firewall)"
+
+sshd_up=false
+if [ "$(systemctl is-active sshd 2>/dev/null)" = "active" ]; then
+    sshd_up=true
+    ok "sshd running ($(systemctl is-enabled sshd 2>/dev/null) at boot)"
+else
+    bad "sshd not running — systemctl enable --now sshd"
+fi
+
+if command -v ufw &>/dev/null && [ "$(systemctl is-active ufw 2>/dev/null)" = "active" ]; then
+    rule=$(ufw_ssh_rule)
+    if [ -n "$rule" ]; then
+        # Report the source, so an unexpectedly wide rule is visible rather than
+        # just showing a green tick.
+        rule_src=$(awk '{print $9}' <<< "$rule" | paste -sd, -)
+        ok "ufw allows :22 from $rule_src"
+
+        # A LAN-scoped rule is correctly unreachable from anywhere else, which
+        # otherwise looks like a broken firewall when you're travelling.
+        if [ "$rule_src" != "0.0.0.0/0" ] \
+           && ! ip -4 route show scope link 2>/dev/null | grep -qF "$rule_src"; then
+            warn "not currently on $rule_src — SSH to this box is expected to be unreachable from here"
+        fi
+    elif [ "$(grep -c '^DEFAULT_INPUT_POLICY="DROP"' /etc/default/ufw 2>/dev/null)" -gt 0 ]; then
+        # The trap this check exists for: sshd listening, ufw dropping, no error anywhere.
+        bad "ufw is active with a DROP input policy and no rule for :22 — inbound SSH is blocked"
+    else
+        warn "ufw active, no explicit :22 rule (input policy is not DROP, so it may still be reachable)"
+    fi
+elif [ "$sshd_up" = true ]; then
+    warn "ufw not active — :22 governed by whatever else is filtering, if anything"
 fi
 
 # ============================================================================
