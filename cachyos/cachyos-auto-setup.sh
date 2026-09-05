@@ -293,7 +293,20 @@ echo ""
 echo "========================================================================"
 echo "STEP 7/16: Installing Audio Stack (PipeWire)"
 echo "========================================================================"
-sudo pacman -Rdd --noconfirm jack jack2 2>/dev/null || true
+# Remove real jack/jack2 only if actually (literally) installed. Two gotchas
+# here: passing a target pacman doesn't recognize aborts the whole -R with no
+# removal at all (the old `2>/dev/null || true` hid that, leaving jack2 in
+# place to conflict with pipewire-jack below); and `pacman -Q jack` alone
+# isn't a safe existence check either — jack2 declares `provides=jack`, so
+# `pacman -Q jack` reports success (resolving via provides) even though no
+# package is literally named "jack", and `pacman -R jack` then fails with
+# "target not found". Check literal installed package names instead.
+INSTALLED_PKGS="$(pacman -Qq)"
+for JACK_PKG in jack jack2; do
+    if grep -qx "$JACK_PKG" <<< "$INSTALLED_PKGS"; then
+        sudo pacman -Rdd --noconfirm "$JACK_PKG"
+    fi
+done
 sudo pacman -S --noconfirm --needed \
     pipewire \
     pipewire-pulse \
