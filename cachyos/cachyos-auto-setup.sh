@@ -695,44 +695,40 @@ fi
 
 # ============================================================================
 # HELPER: detect classic (hyprland.conf) vs Lua/Noctalia (hyprland.lua +
-# config/autostart.lua) config scheme, and a way to inject an autostart
-# command into whichever one this machine/dotfiles branch uses.
+# config/*.lua) config scheme, and a way to add an autostart command to
+# whichever one this machine/dotfiles branch uses.
 # ============================================================================
 HYPR_CONF_DIR="$HOME/.config/hypr"
 HYPRLAND_CONF="$HYPR_CONF_DIR/hyprland.conf"
-HYPR_AUTOSTART_LUA="$HYPR_CONF_DIR/config/autostart.lua"
+HYPR_HOST_LUA="$HYPR_CONF_DIR/config/host/$(uname -n).lua"
 HYPR_LUA_SCHEME=false
 [ -f "$HYPR_CONF_DIR/hyprland.lua" ] && HYPR_LUA_SCHEME=true
 
-# Insert `hl.exec_cmd("<cmd>")` into config/autostart.lua's hl.on("hyprland.start", ...)
-# block, right before its closing `end)`. Skips if already present (idempotent)
-# or if the file doesn't look like the expected shape (prints a warning instead
-# of guessing at a rewrite).
+# Append `hl.exec_cmd("<cmd>")` as its own hl.on("hyprland.start") block in this
+# host's override file, creating the file if needed. Deliberately NOT
+# config/autostart.lua: that one is shared by every box on the branch, so a
+# machine-specific command (a paired bluetooth MAC, say) would follow the branch
+# onto the other boxes. hl.on subscriptions stack, so a standalone block runs
+# alongside the shared handler rather than replacing it — which also means we can
+# just append instead of splicing into someone else's block.
 hypr_lua_autostart_add() {
     local cmd="$1"
-    if [ ! -f "$HYPR_AUTOSTART_LUA" ]; then
-        echo "WARNING: $HYPR_AUTOSTART_LUA not found — add manually: hl.exec_cmd(\"$cmd\")"
+    if [ ! -f "$HYPR_CONF_DIR/hyprland.lua" ]; then
+        echo "WARNING: $HYPR_CONF_DIR/hyprland.lua not found — add manually: hl.exec_cmd(\"$cmd\")"
         return
     fi
-    if grep -qF "$cmd" "$HYPR_AUTOSTART_LUA"; then
-        echo "  already present in autostart.lua: $cmd"
+    if [ -f "$HYPR_HOST_LUA" ] && grep -qF "$cmd" "$HYPR_HOST_LUA"; then
+        echo "  already present in $(basename "$HYPR_HOST_LUA"): $cmd"
         return
     fi
-    awk -v line="    hl.exec_cmd(\"$cmd\")" '
-        { buf[NR] = $0; if ($0 == "end)") last = NR }
-        END {
-            for (i = 1; i <= NR; i++) {
-                if (i == last) print line
-                print buf[i]
-            }
-        }
-    ' "$HYPR_AUTOSTART_LUA" > "$HYPR_AUTOSTART_LUA.tmp" && mv "$HYPR_AUTOSTART_LUA.tmp" "$HYPR_AUTOSTART_LUA"
-    if grep -qF "$cmd" "$HYPR_AUTOSTART_LUA"; then
-        echo "  added to autostart.lua: hl.exec_cmd(\"$cmd\")"
-    else
-        echo "WARNING: couldn't find a closing 'end)' to insert before in $HYPR_AUTOSTART_LUA"
-        echo "         add manually: hl.exec_cmd(\"$cmd\")"
+    mkdir -p "$(dirname "$HYPR_HOST_LUA")"
+    if [ ! -f "$HYPR_HOST_LUA" ]; then
+        printf -- '-- Host-specific overrides for %s\n-- Required last by hyprland.lua, so anything here wins over the shared config.\n' \
+            "$(uname -n)" > "$HYPR_HOST_LUA"
+        echo "  created $HYPR_HOST_LUA"
     fi
+    printf '\nhl.on("hyprland.start", function()\n    hl.exec_cmd("%s")\nend)\n' "$cmd" >> "$HYPR_HOST_LUA"
+    echo "  added to $(basename "$HYPR_HOST_LUA"): hl.exec_cmd(\"$cmd\")"
 }
 
 # ============================================================================
