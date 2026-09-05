@@ -14,22 +14,32 @@ set -e  # Exit on error
 # ============================================================================
 MODE=""
 DOTFILES_BRANCH_ARG=""
+GIT_NAME_ARG=""
+GIT_EMAIL_ARG=""
 for arg in "$@"; do
     case $arg in
         --full)                MODE="full" ;;
         --dev-only)            MODE="dev" ;;
         --dotfiles-branch=*)   DOTFILES_BRANCH_ARG="${arg#*=}" ;;
+        --git-name=*)          GIT_NAME_ARG="${arg#*=}" ;;
+        --git-email=*)         GIT_EMAIL_ARG="${arg#*=}" ;;
     esac
 done
 
 if [ -z "$MODE" ]; then
-    echo "Usage: $0 <mode> [--dotfiles-branch=NAME]"
+    echo "Usage: $0 <mode> [--dotfiles-branch=NAME] [--git-name=NAME] [--git-email=EMAIL]"
     echo ""
     echo "  --full                  Full setup: Hyprland, SDDM, dotfiles, dev tools, fonts, zsh, etc."
     echo "  --dev-only              Dev tools only: .NET, Docker, EF Core, optional CLI tools"
     echo ""
     echo "  --dotfiles-branch=NAME  (full mode) Use this dotfiles branch without prompting."
     echo "                          Omit to be shown a menu of available branches."
+    echo ""
+    echo "  --git-name=NAME         Bootstrap git user.name without prompting."
+    echo "  --git-email=EMAIL       Bootstrap git user.email without prompting."
+    echo "                          Both are skipped entirely if a two-account"
+    echo "                          ~/.gitconfig (from dual-github-account-setup.sh)"
+    echo "                          is already in place. Omit either to be prompted."
     echo ""
     exit 1
 fi
@@ -38,9 +48,14 @@ fi
 # CONFIGURATION - Modify these to customize your installation
 # ============================================================================
 
-# Git configuration
-GIT_USER_NAME="Steve P"
-GIT_USER_EMAIL="sprokopowich@proton.me"
+# Git configuration — used only to bootstrap ~/.gitconfig before the dotfiles
+# checkout, and only on a machine that doesn't already have a two-account
+# setup (see PRESERVE_GITCONFIG below). Leave blank to be prompted at STEP 13;
+# --git-name=/--git-email= override without prompting.
+GIT_USER_NAME=""
+GIT_USER_EMAIL=""
+[ -n "$GIT_NAME_ARG" ] && GIT_USER_NAME="$GIT_NAME_ARG"
+[ -n "$GIT_EMAIL_ARG" ] && GIT_USER_EMAIL="$GIT_EMAIL_ARG"
 
 # Bluetooth device to auto-connect (set to empty string to skip)
 BLUETOOTH_DEVICE_MAC="db:b6:a2:f7:f6:e8"
@@ -93,12 +108,35 @@ echo ""
 # ============================================================================
 # SAFETY GUARDS - Detect an already-configured machine so we don't clobber it
 # ============================================================================
-# If this box already has the two-account git setup or a customized login
-# shell, we preserve them instead of overwriting with the dotfiles/zsh defaults.
+# If this box already has the two-account git/ssh/direnv setup (from
+# dual-github-account-setup.sh) or a customized login shell, we preserve them
+# instead of overwriting with the dotfiles/zsh defaults. The dotfiles checkout
+# in STEP 13 only touches paths the dotfiles repo tracks, but several of these
+# files (ssh config, fish config) are exactly the kind of thing a dotfiles repo
+# tracks — so anything in this list gets backed up before checkout and
+# restored after, regardless of whether this particular dotfiles branch
+# happens to track it.
 PRESERVE_GITCONFIG=false
+DUAL_ACCOUNT_FILES=(
+    "$HOME/.gitconfig"
+    "$HOME/.gitconfig-personal"
+    "$HOME/.gitconfig-work"
+    "$HOME/.ssh/config"
+    "$HOME/.config/fish/config.fish"
+    "$HOME/aerepo/.envrc"
+    "$HOME/repo/.envrc"
+)
 if [ -f "$HOME/.gitconfig" ] && grep -q 'includeIf' "$HOME/.gitconfig" 2>/dev/null; then
     PRESERVE_GITCONFIG=true
-    echo "GUARD: existing ~/.gitconfig with includeIf detected — it will be preserved."
+    DUAL_ACCOUNT_PRESERVE_DIR="$(mktemp -d)"
+    echo "GUARD: existing two-account git/ssh/fish setup detected — preserving these across the dotfiles checkout:"
+    for f in "${DUAL_ACCOUNT_FILES[@]}"; do
+        if [ -f "$f" ]; then
+            echo "  - $f"
+            mkdir -p "$DUAL_ACCOUNT_PRESERVE_DIR/$(dirname "$f")"
+            cp -a "$f" "$DUAL_ACCOUNT_PRESERVE_DIR/$f"
+        fi
+    done
 fi
 
 # Login shell from passwd (not $SHELL, which is whatever ran this script).
@@ -510,11 +548,19 @@ echo "========================================================================"
 
 # Write a minimal gitconfig first so git clone works with correct identity.
 # This will be overwritten by the dotfiles checkout with the full config.
+# (The actual file backups for restore-after-checkout happened already, up in
+# the SAFETY GUARDS section, covering more than just ~/.gitconfig.)
 if [ "$PRESERVE_GITCONFIG" = true ]; then
     echo "GUARD: preserving existing two-account ~/.gitconfig — skipping bootstrap identity."
-    cp -a "$HOME/.gitconfig" "/tmp/gitconfig.preserve.$$"
-    [ -f "$HOME/.gitconfig-personal" ] && cp -a "$HOME/.gitconfig-personal" "/tmp/gitconfig-personal.preserve.$$"
 else
+    if [ -z "$GIT_USER_NAME" ]; then
+        printf "Git user.name for commits: "
+        read -r GIT_USER_NAME
+    fi
+    if [ -z "$GIT_USER_EMAIL" ]; then
+        printf "Git user.email for commits: "
+        read -r GIT_USER_EMAIL
+    fi
     echo "Writing bootstrap git config..."
     git config --global user.name "$GIT_USER_NAME"
     git config --global user.email "$GIT_USER_EMAIL"
@@ -620,26 +666,69 @@ git --git-dir="$HOME/.dotfiles" --work-tree="$HOME" branch --set-upstream-to="or
 
 echo "Dotfiles applied from branch: $DOTFILES_BRANCH"
 
-# Restore the two-account git config the dotfiles checkout just overwrote.
+# Restore the two-account git/ssh/fish files, in case the dotfiles checkout
+# just overwrote any of them (or added them fresh under a different version).
 if [ "$PRESERVE_GITCONFIG" = true ]; then
-    cp -a "/tmp/gitconfig.preserve.$$" "$HOME/.gitconfig" && rm -f "/tmp/gitconfig.preserve.$$"
-    if [ -f "/tmp/gitconfig-personal.preserve.$$" ]; then
-        cp -a "/tmp/gitconfig-personal.preserve.$$" "$HOME/.gitconfig-personal"
-        rm -f "/tmp/gitconfig-personal.preserve.$$"
-    fi
-    echo "GUARD: restored existing two-account ~/.gitconfig (+ ~/.gitconfig-personal)."
+    for f in "${DUAL_ACCOUNT_FILES[@]}"; do
+        backup="$DUAL_ACCOUNT_PRESERVE_DIR/$f"
+        if [ -f "$backup" ]; then
+            mkdir -p "$(dirname "$f")"
+            cp -a "$backup" "$f"
+        fi
+    done
+    rm -rf "$DUAL_ACCOUNT_PRESERVE_DIR"
+    echo "GUARD: restored two-account git/ssh/fish setup (dotfiles versions of these files, if any, were skipped)."
 fi
 
 # ============================================================================
-# CONFIGURATION: hyprpaper (desktop wallpaper)
+# HELPER: detect classic (hyprland.conf) vs Lua/Noctalia (hyprland.lua +
+# config/autostart.lua) config scheme, and a way to inject an autostart
+# command into whichever one this machine/dotfiles branch uses.
+# ============================================================================
+HYPR_CONF_DIR="$HOME/.config/hypr"
+HYPRLAND_CONF="$HYPR_CONF_DIR/hyprland.conf"
+HYPR_AUTOSTART_LUA="$HYPR_CONF_DIR/config/autostart.lua"
+HYPR_LUA_SCHEME=false
+[ -f "$HYPR_CONF_DIR/hyprland.lua" ] && HYPR_LUA_SCHEME=true
+
+# Insert `hl.exec_cmd("<cmd>")` into config/autostart.lua's hl.on("hyprland.start", ...)
+# block, right before its closing `end)`. Skips if already present (idempotent)
+# or if the file doesn't look like the expected shape (prints a warning instead
+# of guessing at a rewrite).
+hypr_lua_autostart_add() {
+    local cmd="$1"
+    if [ ! -f "$HYPR_AUTOSTART_LUA" ]; then
+        echo "WARNING: $HYPR_AUTOSTART_LUA not found — add manually: hl.exec_cmd(\"$cmd\")"
+        return
+    fi
+    if grep -qF "$cmd" "$HYPR_AUTOSTART_LUA"; then
+        echo "  already present in autostart.lua: $cmd"
+        return
+    fi
+    awk -v line="    hl.exec_cmd(\"$cmd\")" '
+        { buf[NR] = $0; if ($0 == "end)") last = NR }
+        END {
+            for (i = 1; i <= NR; i++) {
+                if (i == last) print line
+                print buf[i]
+            }
+        }
+    ' "$HYPR_AUTOSTART_LUA" > "$HYPR_AUTOSTART_LUA.tmp" && mv "$HYPR_AUTOSTART_LUA.tmp" "$HYPR_AUTOSTART_LUA"
+    if grep -qF "$cmd" "$HYPR_AUTOSTART_LUA"; then
+        echo "  added to autostart.lua: hl.exec_cmd(\"$cmd\")"
+    else
+        echo "WARNING: couldn't find a closing 'end)' to insert before in $HYPR_AUTOSTART_LUA"
+        echo "         add manually: hl.exec_cmd(\"$cmd\")"
+    fi
+}
+
+# ============================================================================
+# CONFIGURATION: desktop wallpaper
 # ============================================================================
 echo ""
 echo "========================================================================"
-echo "CONFIGURATION: Setting up hyprpaper desktop wallpaper"
+echo "CONFIGURATION: Setting up desktop wallpaper"
 echo "========================================================================"
-HYPR_CONF_DIR="$HOME/.config/hypr"
-HYPRPAPER_CONF="$HYPR_CONF_DIR/hyprpaper.conf"
-HYPRLAND_CONF="$HYPR_CONF_DIR/hyprland.conf"
 WALLPAPER_DEST="$HOME/Pictures/arch_wallpaper.jpg"
 
 # Fall back to source image if Pictures copy didn't happen (e.g. SDDM extras disabled)
@@ -648,21 +737,32 @@ if [ ! -f "$WALLPAPER_DEST" ] && [ -f "$WALLPAPER_SOURCE" ]; then
     cp "$WALLPAPER_SOURCE" "$WALLPAPER_DEST"
 fi
 
-if [ ! -f "$HYPRPAPER_CONF" ]; then
-    mkdir -p "$HYPR_CONF_DIR"
-    cat > "$HYPRPAPER_CONF" << HYPRPAPER
+if [ "$HYPR_LUA_SCHEME" = true ]; then
+    # Noctalia (this repo's noctalia-cachyos branch) has no dependency on
+    # hyprpaper/swww — it renders its own wallpaper and has its own wallpaper
+    # picker panel (see the "panel-toggle wallpaper" bind). Wiring up hyprpaper
+    # here would just be a second, unused wallpaper daemon, so skip it and
+    # leave the image in ~/Pictures for picking via Noctalia's own panel.
+    echo "Lua/Noctalia hypr config detected — skipping hyprpaper (Noctalia manages its own wallpaper)."
+    echo "Wallpaper image available at $WALLPAPER_DEST for Noctalia's wallpaper panel."
+else
+    HYPRPAPER_CONF="$HYPR_CONF_DIR/hyprpaper.conf"
+    if [ ! -f "$HYPRPAPER_CONF" ]; then
+        mkdir -p "$HYPR_CONF_DIR"
+        cat > "$HYPRPAPER_CONF" << HYPRPAPER
 preload = $WALLPAPER_DEST
 wallpaper = ,$WALLPAPER_DEST
 splash = false
 HYPRPAPER
-    echo "hyprpaper.conf written → $HYPRPAPER_CONF"
-else
-    echo "hyprpaper.conf already exists (from dotfiles) — skipping"
-fi
+        echo "hyprpaper.conf written → $HYPRPAPER_CONF"
+    else
+        echo "hyprpaper.conf already exists (from dotfiles) — skipping"
+    fi
 
-if [ -f "$HYPRLAND_CONF" ] && ! grep -q "exec-once = hyprpaper" "$HYPRLAND_CONF"; then
-    printf '\n# Wallpaper daemon\nexec-once = hyprpaper\n' >> "$HYPRLAND_CONF"
-    echo "exec-once = hyprpaper added to hyprland.conf"
+    if [ -f "$HYPRLAND_CONF" ] && ! grep -q "exec-once = hyprpaper" "$HYPRLAND_CONF"; then
+        printf '\n# Wallpaper daemon\nexec-once = hyprpaper\n' >> "$HYPRLAND_CONF"
+        echo "exec-once = hyprpaper added to hyprland.conf"
+    fi
 fi
 
 # ============================================================================
@@ -737,13 +837,14 @@ ZSHRC
     esac
 fi
 
-# Add Bluetooth auto-connect to hyprland.conf if MAC is configured and not already present
+# Add Bluetooth auto-connect if a MAC is configured and not already present
 if [ -n "$BLUETOOTH_DEVICE_MAC" ]; then
-    HYPR_CONF="$HOME/.config/hypr/hyprland.conf"
-    if [ -f "$HYPR_CONF" ] && ! grep -q "$BLUETOOTH_DEVICE_MAC" "$HYPR_CONF"; then
-        echo "" >> "$HYPR_CONF"
-        echo "# Auto-connect Bluetooth device on login" >> "$HYPR_CONF"
-        echo "exec-once = bluetoothctl connect ${BLUETOOTH_DEVICE_MAC}" >> "$HYPR_CONF"
+    if [ "$HYPR_LUA_SCHEME" = true ]; then
+        hypr_lua_autostart_add "bluetoothctl connect ${BLUETOOTH_DEVICE_MAC}"
+    elif [ -f "$HYPRLAND_CONF" ] && ! grep -q "$BLUETOOTH_DEVICE_MAC" "$HYPRLAND_CONF"; then
+        echo "" >> "$HYPRLAND_CONF"
+        echo "# Auto-connect Bluetooth device on login" >> "$HYPRLAND_CONF"
+        echo "exec-once = bluetoothctl connect ${BLUETOOTH_DEVICE_MAC}" >> "$HYPRLAND_CONF"
         echo "Bluetooth auto-connect entry added to hyprland.conf"
     fi
 fi
