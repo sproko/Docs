@@ -66,6 +66,13 @@ CLAUDE_CONFIG_DIR="$HOME/repo/claude-config"
 # script was invoked from ("../../.config/…"), which is noise in a report.
 DOTFILES_GIT=(git -C "$HOME" --git-dir="$HOME/.dotfiles" --work-tree="$HOME")
 
+# Desktop apps not covered by the base setup — all AUR, so paru is required.
+# teamviewer's Linux client is X11-only and cannot capture a Wayland session:
+# outgoing sessions work, incoming ones get a black screen. rustdesk goes
+# through the PipeWire portal, so it's the one that actually works for inbound
+# control on Hyprland — both are here because they solve different directions.
+DESKTOP_APPS=(teams-for-linux-bin teamviewer rustdesk-bin)
+
 # ============================================================================
 # OUTPUT HELPERS
 # ============================================================================
@@ -148,6 +155,32 @@ if [ "$CHECK_ONLY" = false ]; then
         (cd "$CLAUDE_CONFIG_DIR" && ./install.sh) >/dev/null 2>&1 \
             && echo "  claude-config installed" \
             || echo "  WARNING: claude-config/install.sh failed — run it by hand"
+    fi
+
+    # Filter to what's actually missing first: --needed still makes paru fetch
+    # and compare each AUR package, which is slow for a no-op re-run.
+    if command -v paru &>/dev/null; then
+        missing_apps=()
+        for p in "${DESKTOP_APPS[@]}"; do
+            pacman -Q "$p" &>/dev/null || missing_apps+=("$p")
+        done
+        if [ "${#missing_apps[@]}" -eq 0 ]; then
+            echo "  desktop apps: all present"
+        else
+            echo "  installing from AUR: ${missing_apps[*]}"
+            paru -S --needed --noconfirm "${missing_apps[@]}" \
+                || echo "  WARNING: AUR install failed — run by hand: paru -S ${missing_apps[*]}"
+        fi
+    else
+        echo "  paru not installed — skipping desktop apps"
+    fi
+
+    # The teamviewer package ships the daemon but doesn't enable it, and the GUI
+    # just reports "not ready" with no hint that this is why.
+    if pacman -Q teamviewer &>/dev/null && ! systemctl is-enabled teamviewerd &>/dev/null; then
+        sudo systemctl enable --now teamviewerd \
+            && echo "  teamviewerd enabled" \
+            || echo "  WARNING: could not enable teamviewerd"
     fi
 fi
 
@@ -374,6 +407,26 @@ fi
 command -v direnv &>/dev/null \
     && ok "direnv installed" \
     || bad "direnv missing — per-directory gh switching won't work"
+
+# ============================================================================
+# CHECKS: desktop apps
+# ============================================================================
+section "CHECKS: apps"
+
+for p in "${DESKTOP_APPS[@]}"; do
+    pacman -Q "$p" &>/dev/null \
+        && ok "$p installed" \
+        || bad "$p missing — paru -S $p"
+done
+
+if pacman -Q teamviewer &>/dev/null; then
+    systemctl is-active teamviewerd &>/dev/null \
+        && ok "teamviewerd running" \
+        || bad "teamviewerd not running — sudo systemctl enable --now teamviewerd"
+    # Stated up front rather than discovered halfway through a support call.
+    [ "${XDG_SESSION_TYPE:-}" = wayland ] \
+        && warn "teamviewer can't capture a Wayland session — inbound control needs rustdesk"
+fi
 
 # ============================================================================
 # SUMMARY
