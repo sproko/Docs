@@ -159,6 +159,59 @@ echo "========================================================================"
 sudo pacman -Syu --noconfirm
 
 # ============================================================================
+# RUST LINKER GUARD - fix a broken linker name in rustc's target spec
+# ============================================================================
+# Some rust builds bake a Debian-style linker name into the target spec for
+# x86_64-unknown-linux-gnu — notably the CachyOS x86-64-v4 rebuild
+# (cachyos-extra-v4/rust 1:1.98.1-1.1), which ships:
+#     "linker": "x86_64-linux-gnu-gcc", "linker-flavor": "gnu-lld-cc"
+# Arch names that binary x86_64-pc-linux-gnu-gcc, so rustc cannot find it and
+# EVERY rust build fails with:
+#     error: linker `x86_64-linux-gnu-gcc` not found
+# paru is the first thing this script compiles, so an affected box dies at
+# STEP 2. Machines whose CPU isn't v4-capable get Arch's extra/rust instead and
+# never see it — which is why this can pass on one box and fail on another.
+#
+# Rather than pin a package version (the next rebuild would move it), ask rustc
+# which linker it wants and shim that name to gcc only if it doesn't resolve.
+# No-op wherever the linker is already valid. Safe to call more than once.
+ensure_rust_linker() {
+    command -v rustc &>/dev/null || return 0
+    command -v gcc   &>/dev/null || return 0
+
+    local wanted gccpath probe
+    wanted=$(RUSTC_BOOTSTRAP=1 rustc -Z unstable-options --print target-spec-json 2>/dev/null \
+        | sed -n 's/.*"linker"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+
+    # Fallback for rustc versions that won't print the spec: provoke a link
+    # failure and read the linker name straight out of the error message.
+    if [ -z "$wanted" ]; then
+        probe=$(mktemp -d)
+        echo 'fn main(){}' > "$probe/probe.rs"
+        wanted=$(rustc -o "$probe/probe" "$probe/probe.rs" 2>&1 \
+            | sed -n 's/^error: linker `\([^`]*\)` not found.*/\1/p' | head -1)
+        rm -rf "$probe"
+    fi
+
+    [ -n "$wanted" ] || return 0
+    command -v "$wanted" &>/dev/null && return 0
+
+    # Only ever create a plain command name, never a path or anything exotic.
+    case "$wanted" in
+        *[!A-Za-z0-9._+-]*|"")
+            echo "GUARD: rustc wants linker '$wanted', which is missing but not a"
+            echo "       plain command name — refusing to symlink it. Fix manually."
+            return 0 ;;
+    esac
+
+    gccpath=$(command -v gcc)
+    echo "GUARD: rustc wants linker '$wanted', which is not on PATH."
+    echo "       symlinking /usr/local/bin/$wanted -> $gccpath so rust builds work."
+    sudo mkdir -p /usr/local/bin
+    sudo ln -sfn "$gccpath" "/usr/local/bin/$wanted"
+}
+
+# ============================================================================
 # STEP 2/16: Install paru (AUR helper)
 # ============================================================================
 echo ""
@@ -170,6 +223,13 @@ if command -v paru &>/dev/null; then
 else
     echo "paru not found — cloning and building from AUR..."
     sudo pacman -S --noconfirm --needed git base-devel
+    # paru is written in rust. Install the toolchain up front (makepkg would
+    # otherwise pull it as a makedepend) so the linker guard below has a rustc
+    # to interrogate BEFORE the build starts.
+    if ! command -v cargo &>/dev/null; then
+        sudo pacman -S --noconfirm --needed rust
+    fi
+    ensure_rust_linker
     PARU_TMP=$(mktemp -d)
     git clone https://aur.archlinux.org/paru.git "$PARU_TMP/paru"
     pushd "$PARU_TMP/paru" > /dev/null
@@ -384,11 +444,19 @@ echo "========================================================================"
 if [ "$INSTALL_OMZ" = true ]; then
     sudo pacman -S --noconfirm --needed zsh
 
-    echo "Installing Oh-My-Zsh..."
-    export RUNZSH=no
-    export KEEP_ZSHRC=yes
-    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-    echo "Oh-My-Zsh installed"
+    # The upstream installer EXITS 1 when $ZSH already exists ("You'll need to
+    # remove it if you want to reinstall"), which with `set -e` aborts this
+    # whole script at STEP 11 on any re-run. Check first rather than papering
+    # over it with `|| true`, so a genuine install failure still stops us.
+    if [ -d "$HOME/.oh-my-zsh" ]; then
+        echo "Oh-My-Zsh already present at $HOME/.oh-my-zsh — skipping."
+    else
+        echo "Installing Oh-My-Zsh..."
+        export RUNZSH=no
+        export KEEP_ZSHRC=yes
+        sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+        echo "Oh-My-Zsh installed"
+    fi
 else
     echo "Skipping Oh-My-Zsh installation (disabled in config)"
 fi
