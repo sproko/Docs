@@ -80,7 +80,17 @@ DOTFILES_GIT=(git -C "$HOME" --git-dir="$HOME/.dotfiles" --work-tree="$HOME")
 # declare it: without it teamviewerd dies at startup with exit 127 on a missing
 # libminizip.so.1, and nothing in the install output hints at why. Must be
 # minizip, not minizip-ng — the fork ships a different soname.
-DESKTOP_APPS=(teams-for-linux-bin teamviewer rustdesk-bin minizip)
+#
+# gnome-keyring is the Secret Service provider: gitkraken links libsecret and
+# has nowhere to put a token without it. Installing it is the whole setup —
+# Arch's /etc/pam.d/sddm already carries the pam_gnome_keyring lines, prefixed
+# with `-` so they no-op until the module exists. Takes effect on the next full
+# SDDM login, not on this script's run. keepassxc is the personal vault and is
+# deliberately NOT wired to the Secret Service: see the check below for why.
+DESKTOP_APPS=(
+    teams-for-linux-bin teamviewer rustdesk-bin minizip
+    gnome-keyring seahorse keepassxc
+)
 
 # ============================================================================
 # OUTPUT HELPERS
@@ -464,6 +474,26 @@ if pacman -Q rustdesk-bin &>/dev/null; then
     systemctl is-active rustdesk &>/dev/null \
         && ok "rustdesk service running" \
         || bad "rustdesk service not running — sudo systemctl enable --now rustdesk"
+fi
+
+if pacman -Q gnome-keyring &>/dev/null; then
+    # gnome-keyring and kwallet's secretservicecompat both want to own
+    # org.freedesktop.secrets, and whichever claims it first keeps it. If
+    # kwallet wins, gitkraken's token goes into a wallet nothing else reads and
+    # no error is raised anywhere. GetConnectionUnixProcessID doesn't D-Bus
+    # activate, so asking cannot itself decide the race.
+    secrets_pid=$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
+        org.freedesktop.DBus GetConnectionUnixProcessID s org.freedesktop.secrets 2>/dev/null \
+        | awk '/^u /{print $2}')
+    if [ -z "$secrets_pid" ]; then
+        warn "no Secret Service running yet — full SDDM re-login starts it via pam_gnome_keyring"
+    else
+        secrets_comm=$(cat "/proc/$secrets_pid/comm" 2>/dev/null)
+        case "$secrets_comm" in
+            gnome-keyring*) ok "Secret Service owned by $secrets_comm" ;;
+            *) bad "Secret Service owned by '${secrets_comm:-unknown}', expected gnome-keyring — app tokens will land somewhere nothing else reads" ;;
+        esac
+    fi
 fi
 
 # ============================================================================
