@@ -66,12 +66,17 @@ CLAUDE_CONFIG_DIR="$HOME/repo/claude-config"
 # script was invoked from ("../../.config/…"), which is noise in a report.
 DOTFILES_GIT=(git -C "$HOME" --git-dir="$HOME/.dotfiles" --work-tree="$HOME")
 
-# Desktop apps not covered by the base setup — all AUR, so paru is required.
+# Desktop apps not covered by the base setup — mostly AUR, so paru is required.
 # teamviewer's Linux client is X11-only and cannot capture a Wayland session:
 # outgoing sessions work, incoming ones get a black screen. rustdesk goes
 # through the PipeWire portal, so it's the one that actually works for inbound
 # control on Hyprland — both are here because they solve different directions.
-DESKTOP_APPS=(teams-for-linux-bin teamviewer rustdesk-bin)
+#
+# minizip is a repo package, listed because teamviewer's PKGBUILD doesn't
+# declare it: without it teamviewerd dies at startup with exit 127 on a missing
+# libminizip.so.1, and nothing in the install output hints at why. Must be
+# minizip, not minizip-ng — the fork ships a different soname.
+DESKTOP_APPS=(teams-for-linux-bin teamviewer rustdesk-bin minizip)
 
 # ============================================================================
 # OUTPUT HELPERS
@@ -176,8 +181,10 @@ if [ "$CHECK_ONLY" = false ]; then
     fi
 
     # The teamviewer package ships the daemon but doesn't enable it, and the GUI
-    # just reports "not ready" with no hint that this is why.
-    if pacman -Q teamviewer &>/dev/null && ! systemctl is-enabled teamviewerd &>/dev/null; then
+    # just reports "not ready" with no hint that this is why. Keyed on is-active
+    # rather than is-enabled so this also recovers a unit that is enabled but
+    # dead — which is how it lands when it first started before minizip existed.
+    if pacman -Q teamviewer &>/dev/null && ! systemctl is-active teamviewerd &>/dev/null; then
         sudo systemctl enable --now teamviewerd \
             && echo "  teamviewerd enabled" \
             || echo "  WARNING: could not enable teamviewerd"
