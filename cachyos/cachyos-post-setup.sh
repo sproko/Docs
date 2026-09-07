@@ -53,6 +53,10 @@ PERSONAL_SSH_ALIAS="github.com-personal"
 PERSONAL_GH_USER="sproko"
 PERSONAL_GH_CONFIG="$HOME/.config/gh-personal"
 
+# What gh falls back to anywhere outside the two project trees. Personal by
+# design: everywhere except $WORK_DIR should answer as the personal account.
+DEFAULT_GH_CONFIG="$HOME/.config/gh"
+
 # Inbound SSH. Scoped to the home LAN rather than opened globally: these are
 # laptops that end up on café and hotel wifi, where a plain `ufw allow 22` would
 # expose the port to everyone else on that network. Deliberately a constant and
@@ -109,6 +113,20 @@ section() {
     echo "========================================================================"
     echo "$1"
     echo "========================================================================"
+}
+
+# Neither remote-access package enables its own daemon, and both fail quietly
+# when it's missing: teamviewer's GUI just says "not ready", rustdesk simply
+# never answers an inbound session. Keyed on is-active rather than is-enabled so
+# an enabled-but-dead unit is recovered too — which is how teamviewerd lands
+# when it first starts before minizip is installed.
+ensure_service() {
+    local pkg="$1" unit="$2"
+    pacman -Q "$pkg" &>/dev/null || return 0
+    systemctl is-active "$unit" &>/dev/null && return 0
+    sudo systemctl enable --now "$unit" \
+        && echo "  $unit enabled" \
+        || echo "  WARNING: could not enable $unit"
 }
 
 echo "╔════════════════════════════════════════════════════════════════╗"
@@ -180,15 +198,8 @@ if [ "$CHECK_ONLY" = false ]; then
         echo "  paru not installed — skipping desktop apps"
     fi
 
-    # The teamviewer package ships the daemon but doesn't enable it, and the GUI
-    # just reports "not ready" with no hint that this is why. Keyed on is-active
-    # rather than is-enabled so this also recovers a unit that is enabled but
-    # dead — which is how it lands when it first started before minizip existed.
-    if pacman -Q teamviewer &>/dev/null && ! systemctl is-active teamviewerd &>/dev/null; then
-        sudo systemctl enable --now teamviewerd \
-            && echo "  teamviewerd enabled" \
-            || echo "  WARNING: could not enable teamviewerd"
-    fi
+    ensure_service teamviewer   teamviewerd
+    ensure_service rustdesk-bin rustdesk
 fi
 
 # ============================================================================
@@ -298,6 +309,19 @@ check_gh_account() {
 
 check_gh_account "$WORK_DIR"     "$WORK_GH_CONFIG"     "$WORK_GH_USER" "$WORK_GH_ORG"
 check_gh_account "$PERSONAL_DIR" "$PERSONAL_GH_CONFIG" "$PERSONAL_GH_USER"
+check_gh_account "default"       "$DEFAULT_GH_CONFIG"  "$PERSONAL_GH_USER"
+
+# check_gh_account only asks who the ACTIVE account is, which still passes when
+# both logins landed in one config — the state `gh auth login` leaves behind
+# when it runs somewhere direnv hasn't exported GH_CONFIG_DIR (a non-fish shell,
+# or an editor's shell-out). gh then answers as whichever account is active,
+# everywhere, and nothing says so. Assert the default holds one account only.
+if command -v gh &>/dev/null && [ -d "$DEFAULT_GH_CONFIG" ]; then
+    n_default=$(GH_CONFIG_DIR="$DEFAULT_GH_CONFIG" gh auth status 2>/dev/null | grep -c 'Logged in to')
+    [ "$n_default" -le 1 ] \
+        && ok "default gh config holds a single account" \
+        || bad "default gh config holds $n_default accounts — prune with: GH_CONFIG_DIR=$DEFAULT_GH_CONFIG gh auth logout --user $WORK_GH_USER"
+fi
 
 # ============================================================================
 # CHECKS: desktop config health
@@ -433,6 +457,13 @@ if pacman -Q teamviewer &>/dev/null; then
     # Stated up front rather than discovered halfway through a support call.
     [ "${XDG_SESSION_TYPE:-}" = wayland ] \
         && warn "teamviewer can't capture a Wayland session — inbound control needs rustdesk"
+fi
+
+if pacman -Q rustdesk-bin &>/dev/null; then
+    # Without the service, rustdesk only answers while its GUI window is open.
+    systemctl is-active rustdesk &>/dev/null \
+        && ok "rustdesk service running" \
+        || bad "rustdesk service not running — sudo systemctl enable --now rustdesk"
 fi
 
 # ============================================================================
