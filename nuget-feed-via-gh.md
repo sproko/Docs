@@ -6,9 +6,20 @@ Your real GitHub identity becomes the credential, and `gh` OAuth tokens are stab
 Feed: `https://nuget.pkg.github.com/AngstromEngineering/index.json`
 Org account: `sprokopowich` (work, not `sproko`)
 
+> **Which account `gh` answers as depends on the directory.** direnv exports a
+> per-directory `GH_CONFIG_DIR`, so `gh auth token` returns the **personal**
+> (`sproko`) token anywhere outside `~/aerepo`. Run these from `~/aerepo`, or set
+> `GH_CONFIG_DIR` explicitly as below. Get this wrong and the personal token is
+> wired into the work feed — which still returns 200 on the service index, so it
+> looks fine until a restore 401s.
+
 ## One-time setup per machine (global — covers every repo)
 
 ```bash
+# GH_CONFIG_DIR is spelled out rather than relying on being cd'd into ~/aerepo,
+# because these get pasted into whatever shell is to hand.
+export GH_CONFIG_DIR="$HOME/.config/gh-work"
+
 # 1. Add the read:packages scope to your existing gh login (interactive, opens browser)
 gh auth refresh -h github.com -s read:packages
 
@@ -28,13 +39,17 @@ dotnet nuget add source https://nuget.pkg.github.com/AngstromEngineering/index.j
 ## Verify
 
 ```bash
-# Quick auth probe — expect 200
-curl -s -o /dev/null -w "%{http_code}\n" \
-  -u "sprokopowich:$(gh auth token)" \
-  https://nuget.pkg.github.com/AngstromEngineering/index.json
+# Confirms read:packages is actually on the token. The service index alone does
+# NOT — GitHub serves it to any valid token, including one with no package
+# scope and the personal account's token, so a 200 there proves nothing.
+GH_CONFIG_DIR="$HOME/.config/gh-work" \
+  gh api "/orgs/AngstromEngineering/packages?package_type=nuget&per_page=5" \
+  --jq '.[].name'
 
-# Real test
-dotnet restore   # run from a repo that references AE packages
+# Real test, from a throwaway project so it works on a machine with no AE repo
+# cloned yet. Substitute any package name from the list above.
+dotnet new classlib -o /tmp/nugetprobe --no-restore
+(cd /tmp/nugetprobe && dotnet add package AE.Logger) && rm -rf /tmp/nugetprobe
 ```
 
 ## Notes
@@ -51,5 +66,8 @@ dotnet restore   # run from a repo that references AE packages
 | Error | Fix |
 |---|---|
 | `401 Unauthorized` | Token missing `read:packages` — re-run step 1, then step 2 |
+| `401` but `curl` on the index returns 200 | The personal token got wired in: step 2 ran without `GH_CONFIG_DIR`. Re-run it with the export set |
 | `403 Forbidden` | Wrong account — confirm `sprokopowich` is the org member |
 | `Unable to load the service index` | Network/VPN issue reaching `nuget.pkg.github.com` |
+| Worked yesterday, 401s today | `gh` re-auth rotated the token; the one in nuget.config is a snapshot. Re-run step 2 in `update` form |
+| Rider 401s while the CLI works | Rider caches sources at startup — restart it after step 2 |
