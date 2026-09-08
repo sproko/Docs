@@ -85,6 +85,10 @@ DOTFILES_GIT=(git -C "$HOME" --git-dir="$HOME/.dotfiles" --work-tree="$HOME")
 # mingw-w64-gcc, so its first install is a long compile rather than a download.
 # Budget for that on a fresh box; every other entry here is a fetch.
 #
+# powershell-bin, not powershell: same 7.6.x, but the plain AUR package builds
+# .NET from source while -bin unpacks Microsoft's prebuilt tarball. It Provides
+# powershell, so the check below has to query powershell-bin by its own name.
+#
 # gnome-keyring is the Secret Service provider: gitkraken links libsecret and
 # has nowhere to put a token without it. Installing it is the whole setup —
 # Arch's /etc/pam.d/sddm already carries the pam_gnome_keyring lines, prefixed
@@ -94,7 +98,7 @@ DOTFILES_GIT=(git -C "$HOME" --git-dir="$HOME/.dotfiles" --work-tree="$HOME")
 DESKTOP_APPS=(
     teams-for-linux-bin teamviewer rustdesk-bin minizip
     gnome-keyring seahorse keepassxc
-    nsis
+    nsis powershell-bin
 )
 
 # ============================================================================
