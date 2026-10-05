@@ -4,7 +4,7 @@
 # linux-surface kernel (touchscreen/pen need its ipts driver — stock CachyOS
 # kernels don't have it), iptsd, thermald, plus the packages the per-host hypr
 # config (dotfiles: .config/hypr/config/host/surface.lua) expects:
-# iio-sensor-proxy for auto-rotation and squeekboard for the on-screen keyboard.
+# iio-sensor-proxy for auto-rotation.
 #
 # libwacom-surface is gone from the linux-surface repo; stock libwacom covers it.
 #
@@ -26,7 +26,7 @@ fi
 
 # 3. Packages (iptsd is started automatically by udev)
 pacman -Syu --needed linux-surface linux-surface-headers iptsd thermald \
-  iio-sensor-proxy squeekboard
+  iio-sensor-proxy
 
 # 4. Thermal management
 systemctl enable --now thermald
