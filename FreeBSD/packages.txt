@@ -1,0 +1,18 @@
+# Packages provision.sh installs on every deployed box. One per line; # comments ok.
+sudo
+zsh
+ohmyzsh
+starship
+git
+gh
+neovim
+tmux
+htop
+btop
+fastfetch
+curl
+rsync
+smartmontools
+dmidecode
+# Lets crashinfo put a backtrace in /var/crash/core.txt.N after a panic
+gdb

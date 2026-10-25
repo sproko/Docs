@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# PROVIDE: deploy_firstboot
+# REQUIRE: NETWORKING syslogd ntpd
+# BEFORE: LOGIN
+# KEYWORD: firstboot
+#
+# Runs provision.sh once, on the first boot after a USB deploy install. The
+# firstboot keyword means rc only runs this while /firstboot exists, and rc
+# removes that file at the end of boot.
+
+. /etc/rc.subr
+
+name="deploy_firstboot"
+rcvar="deploy_firstboot_enable"
+start_cmd="deploy_firstboot_start"
+stop_cmd=":"
+
+deploy_firstboot_start()
+{
+	echo "Provisioning this system (log: /var/log/deploy-firstboot.log)..."
+	/usr/local/sbin/deploy-provision 2>&1 | tee /var/log/deploy-firstboot.log
+
+	# freebsd-update may have installed a new kernel; asking rc for a reboot
+	# boots into it before anyone logs in.
+	if [ "$(freebsd-version -k)" != "$(uname -r)" ]; then
+		echo "New kernel installed; rebooting at the end of startup."
+		touch "${firstboot_sentinel}-reboot"
+	fi
+}
+
+load_rc_config $name
+: ${deploy_firstboot_enable:="NO"}
+run_rc_command "$1"

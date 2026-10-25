@@ -1,0 +1,5 @@
+# Password hashes + SSH keys for the image — this repo is public
+secrets.conf
+# Built images and the generated installerconfig (which embeds the secrets)
+build/
+*.img
