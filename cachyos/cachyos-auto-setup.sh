@@ -616,6 +616,14 @@ SDDMCONF
     fi
 fi
 
+# CachyOS's Hyprland/Noctalia edition ships greetd, and `systemctl enable sddm` refuses
+# while display-manager.service points at another unit. Under set -e that ended the
+# whole script here, before the dotfiles checkout.
+CURRENT_DM="$(basename "$(readlink /etc/systemd/system/display-manager.service 2>/dev/null)" .service)"
+if [ -n "$CURRENT_DM" ] && [ "$CURRENT_DM" != "sddm" ]; then
+    echo "Replacing display manager '$CURRENT_DM' with sddm (takes effect on reboot)"
+    sudo systemctl disable "$CURRENT_DM"
+fi
 sudo systemctl enable sddm
 echo "SDDM installed and enabled"
 
