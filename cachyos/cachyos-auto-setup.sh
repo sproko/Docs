@@ -20,6 +20,7 @@ for arg in "$@"; do
     case $arg in
         --full)                MODE="full" ;;
         --dev-only)            MODE="dev" ;;
+        --sddm-only)           MODE="sddm" ;;
         --dotfiles-branch=*)   DOTFILES_BRANCH_ARG="${arg#*=}" ;;
         --git-name=*)          GIT_NAME_ARG="${arg#*=}" ;;
         --git-email=*)         GIT_EMAIL_ARG="${arg#*=}" ;;
@@ -31,6 +32,7 @@ if [ -z "$MODE" ]; then
     echo ""
     echo "  --full                  Full setup: Hyprland, SDDM, dotfiles, dev tools, fonts, zsh, etc."
     echo "  --dev-only              Dev tools only: .NET, Docker, EF Core, optional CLI tools"
+    echo "  --sddm-only             Only install SDDM + the Catppuccin astronaut login theme"
     echo ""
     echo "  --dotfiles-branch=NAME  (full mode) Use this dotfiles branch without prompting."
     echo "                          Omit to be shown a menu of available branches."
@@ -92,6 +94,166 @@ INSTALL_HYPRLAND_EXTRAS=true      # Install sddm-astronaut-theme, wlopm, etc.
 # SCRIPT START - Do not modify below unless you know what you're doing
 # ============================================================================
 
+# Step 12 lives in a function so --sddm-only can run it alone on an existing box.
+install_sddm() {
+sudo pacman -S --noconfirm --needed sddm
+
+if [ "$INSTALL_HYPRLAND_EXTRAS" = true ]; then
+    echo "Installing sddm-astronaut-theme from AUR..."
+    paru -S --noconfirm --needed sddm-astronaut-theme || true
+
+    THEME_DIR="/usr/share/sddm/themes/sddm-astronaut-theme"
+
+    if [ -d "$THEME_DIR" ]; then
+        # Copy wallpaper into theme Backgrounds folder and ~/Pictures for hyprpaper
+        if [ -f "$WALLPAPER_SOURCE" ]; then
+            sudo cp "$WALLPAPER_SOURCE" "$THEME_DIR/Backgrounds/arch_wallpaper.jpg"
+            mkdir -p "$HOME/Pictures"
+            cp "$WALLPAPER_SOURCE" "$HOME/Pictures/arch_wallpaper.jpg"
+            echo "Wallpaper copied to theme Backgrounds/ and ~/Pictures/"
+        else
+            echo "WARNING: Wallpaper not found at $WALLPAPER_SOURCE"
+            echo "         You will need to manually copy a wallpaper to:"
+            echo "         $THEME_DIR/Backgrounds/arch_wallpaper.jpg"
+            echo "         $HOME/Pictures/arch_wallpaper.jpg"
+        fi
+
+        # Write Catppuccin Mocha theme config
+        echo "Writing catppuccin_mocha.conf..."
+        sudo tee "$THEME_DIR/Themes/catppuccin_mocha.conf" > /dev/null << 'SDDMTHEME'
+[General]
+ScreenWidth="2560"
+ScreenHeight="1440"
+ScreenPadding=""
+
+Font="JetBrainsMono Nerd Font"
+FontSize="13"
+KeyboardSize="0.4"
+RoundCorners="20"
+
+Locale=""
+HourFormat="HH:mm"
+DateFormat="dddd d MMMM"
+HeaderText=""
+
+Background="Backgrounds/arch_wallpaper.jpg"
+BackgroundPlaceholder=""
+BackgroundSpeed=""
+PauseBackground=""
+DimBackground="0.5"
+CropBackground="true"
+BackgroundHorizontalAlignment="center"
+BackgroundVerticalAlignment="center"
+
+HeaderTextColor="#cdd6f4"
+DateTextColor="#cdd6f4"
+TimeTextColor="#cdd6f4"
+
+FormBackgroundColor="#1e1e2e"
+BackgroundColor="#1e1e2e"
+DimBackgroundColor="#1e1e2e"
+
+LoginFieldBackgroundColor="#313244"
+PasswordFieldBackgroundColor="#313244"
+LoginFieldTextColor="#cdd6f4"
+PasswordFieldTextColor="#cdd6f4"
+UserIconColor="#cdd6f4"
+PasswordIconColor="#cdd6f4"
+
+PlaceholderTextColor="#6c7086"
+WarningColor="#45475a"
+
+LoginButtonTextColor="#1e1e2e"
+LoginButtonBackgroundColor="#cdd6f4"
+SystemButtonsIconsColor="#cdd6f4"
+SessionButtonTextColor="#cdd6f4"
+VirtualKeyboardButtonTextColor="#cdd6f4"
+
+DropdownTextColor="#cdd6f4"
+DropdownSelectedBackgroundColor="#45475a"
+DropdownBackgroundColor="#1e1e2e"
+
+HighlightTextColor="#1e1e2e"
+HighlightBackgroundColor="#cdd6f4"
+HighlightBorderColor="#cdd6f4"
+
+HoverUserIconColor="#89b4fa"
+HoverPasswordIconColor="#89b4fa"
+HoverSystemButtonsIconsColor="#89b4fa"
+HoverSessionButtonTextColor="#89b4fa"
+HoverVirtualKeyboardButtonTextColor="#89b4fa"
+
+PartialBlur=""
+FullBlur="true"
+BlurMax="64"
+Blur="1.0"
+
+HaveFormBackground="true"
+FormPosition="center"
+
+VirtualKeyboardPosition="center"
+
+HideVirtualKeyboard="true"
+HideSystemButtons="false"
+HideLoginButton="false"
+
+ForceLastUser="true"
+PasswordFocus="true"
+HideCompletePassword="true"
+AllowEmptyPassword="false"
+AllowUppercaseLettersInUsernames="false"
+BypassSystemButtonsChecks="false"
+RightToLeftLayout="false"
+
+TranslatePlaceholderUsername=""
+TranslatePlaceholderPassword=""
+TranslateLogin=""
+TranslateLoginFailedWarning=""
+TranslateCapslockWarning=""
+TranslateSuspend=""
+TranslateHibernate=""
+TranslateReboot=""
+TranslateShutdown=""
+TranslateSessionSelection=""
+TranslateVirtualKeyboardButtonOn=""
+TranslateVirtualKeyboardButtonOff=""
+SDDMTHEME
+
+        # Point theme at catppuccin_mocha config
+        sudo sed -i 's|ConfigFile=.*|ConfigFile=Themes/catppuccin_mocha.conf|' \
+            "$THEME_DIR/metadata.desktop"
+
+        # Set SDDM to use this theme
+        sudo mkdir -p /etc/sddm.conf.d
+        sudo tee /etc/sddm.conf.d/theme.conf > /dev/null << 'SDDMCONF'
+[Theme]
+Current=sddm-astronaut-theme
+SDDMCONF
+
+        echo "Catppuccin Mocha SDDM theme configured"
+    else
+        echo "WARNING: sddm-astronaut-theme directory not found, skipping theme config"
+    fi
+fi
+
+# CachyOS's Hyprland/Noctalia edition ships greetd, and `systemctl enable sddm` refuses
+# while display-manager.service points at another unit. Under set -e that ended the
+# whole script here, before the dotfiles checkout.
+CURRENT_DM="$(basename "$(readlink /etc/systemd/system/display-manager.service 2>/dev/null)" .service)"
+if [ -n "$CURRENT_DM" ] && [ "$CURRENT_DM" != "sddm" ]; then
+    echo "Replacing display manager '$CURRENT_DM' with sddm (takes effect on reboot)"
+    sudo systemctl disable "$CURRENT_DM"
+fi
+sudo systemctl enable sddm
+echo "SDDM installed and enabled"
+}
+
+if [ "$MODE" = "sddm" ]; then
+    sudo -v
+    install_sddm
+    exit 0
+fi
+
 if [ "$MODE" = "full" ]; then
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║  CachyOS Unattended Setup - Hyprland Development Environment  ║"
@@ -131,6 +293,13 @@ if [ -f "$HOME/.gitconfig" ] && grep -q 'includeIf' "$HOME/.gitconfig" 2>/dev/nu
     DUAL_ACCOUNT_PRESERVE_DIR="$(mktemp -d)"
     echo "GUARD: existing two-account git/ssh/fish setup detected — preserving these across the dotfiles checkout:"
     for f in "${DUAL_ACCOUNT_FILES[@]}"; do
+        # A file still identical to the distro's /etc/skel copy (CachyOS's stock fish
+        # config) holds no customization, so let the dotfiles version win.
+        skel="/etc/skel/${f#"$HOME"/}"
+        if [ -f "$f" ] && [ -f "$skel" ] && cmp -s "$f" "$skel"; then
+            echo "  - $f (stock /etc/skel copy, not preserved)"
+            continue
+        fi
         if [ -f "$f" ]; then
             echo "  - $f"
             mkdir -p "$DUAL_ACCOUNT_PRESERVE_DIR/$(dirname "$f")"
@@ -476,156 +645,7 @@ echo ""
 echo "========================================================================"
 echo "STEP 12/16: Installing SDDM Display Manager + Catppuccin Mocha theme"
 echo "========================================================================"
-sudo pacman -S --noconfirm --needed sddm
-
-if [ "$INSTALL_HYPRLAND_EXTRAS" = true ]; then
-    echo "Installing sddm-astronaut-theme from AUR..."
-    paru -S --noconfirm --needed sddm-astronaut-theme || true
-
-    THEME_DIR="/usr/share/sddm/themes/sddm-astronaut-theme"
-
-    if [ -d "$THEME_DIR" ]; then
-        # Copy wallpaper into theme Backgrounds folder and ~/Pictures for hyprpaper
-        if [ -f "$WALLPAPER_SOURCE" ]; then
-            sudo cp "$WALLPAPER_SOURCE" "$THEME_DIR/Backgrounds/arch_wallpaper.jpg"
-            mkdir -p "$HOME/Pictures"
-            cp "$WALLPAPER_SOURCE" "$HOME/Pictures/arch_wallpaper.jpg"
-            echo "Wallpaper copied to theme Backgrounds/ and ~/Pictures/"
-        else
-            echo "WARNING: Wallpaper not found at $WALLPAPER_SOURCE"
-            echo "         You will need to manually copy a wallpaper to:"
-            echo "         $THEME_DIR/Backgrounds/arch_wallpaper.jpg"
-            echo "         $HOME/Pictures/arch_wallpaper.jpg"
-        fi
-
-        # Write Catppuccin Mocha theme config
-        echo "Writing catppuccin_mocha.conf..."
-        sudo tee "$THEME_DIR/Themes/catppuccin_mocha.conf" > /dev/null << 'SDDMTHEME'
-[General]
-ScreenWidth="2560"
-ScreenHeight="1440"
-ScreenPadding=""
-
-Font="JetBrainsMono Nerd Font"
-FontSize="13"
-KeyboardSize="0.4"
-RoundCorners="20"
-
-Locale=""
-HourFormat="HH:mm"
-DateFormat="dddd d MMMM"
-HeaderText=""
-
-Background="Backgrounds/arch_wallpaper.jpg"
-BackgroundPlaceholder=""
-BackgroundSpeed=""
-PauseBackground=""
-DimBackground="0.5"
-CropBackground="true"
-BackgroundHorizontalAlignment="center"
-BackgroundVerticalAlignment="center"
-
-HeaderTextColor="#cdd6f4"
-DateTextColor="#cdd6f4"
-TimeTextColor="#cdd6f4"
-
-FormBackgroundColor="#1e1e2e"
-BackgroundColor="#1e1e2e"
-DimBackgroundColor="#1e1e2e"
-
-LoginFieldBackgroundColor="#313244"
-PasswordFieldBackgroundColor="#313244"
-LoginFieldTextColor="#cdd6f4"
-PasswordFieldTextColor="#cdd6f4"
-UserIconColor="#cdd6f4"
-PasswordIconColor="#cdd6f4"
-
-PlaceholderTextColor="#6c7086"
-WarningColor="#45475a"
-
-LoginButtonTextColor="#1e1e2e"
-LoginButtonBackgroundColor="#cdd6f4"
-SystemButtonsIconsColor="#cdd6f4"
-SessionButtonTextColor="#cdd6f4"
-VirtualKeyboardButtonTextColor="#cdd6f4"
-
-DropdownTextColor="#cdd6f4"
-DropdownSelectedBackgroundColor="#45475a"
-DropdownBackgroundColor="#1e1e2e"
-
-HighlightTextColor="#1e1e2e"
-HighlightBackgroundColor="#cdd6f4"
-HighlightBorderColor="#cdd6f4"
-
-HoverUserIconColor="#89b4fa"
-HoverPasswordIconColor="#89b4fa"
-HoverSystemButtonsIconsColor="#89b4fa"
-HoverSessionButtonTextColor="#89b4fa"
-HoverVirtualKeyboardButtonTextColor="#89b4fa"
-
-PartialBlur=""
-FullBlur="true"
-BlurMax="64"
-Blur="1.0"
-
-HaveFormBackground="true"
-FormPosition="center"
-
-VirtualKeyboardPosition="center"
-
-HideVirtualKeyboard="true"
-HideSystemButtons="false"
-HideLoginButton="false"
-
-ForceLastUser="true"
-PasswordFocus="true"
-HideCompletePassword="true"
-AllowEmptyPassword="false"
-AllowUppercaseLettersInUsernames="false"
-BypassSystemButtonsChecks="false"
-RightToLeftLayout="false"
-
-TranslatePlaceholderUsername=""
-TranslatePlaceholderPassword=""
-TranslateLogin=""
-TranslateLoginFailedWarning=""
-TranslateCapslockWarning=""
-TranslateSuspend=""
-TranslateHibernate=""
-TranslateReboot=""
-TranslateShutdown=""
-TranslateSessionSelection=""
-TranslateVirtualKeyboardButtonOn=""
-TranslateVirtualKeyboardButtonOff=""
-SDDMTHEME
-
-        # Point theme at catppuccin_mocha config
-        sudo sed -i 's|ConfigFile=.*|ConfigFile=Themes/catppuccin_mocha.conf|' \
-            "$THEME_DIR/metadata.desktop"
-
-        # Set SDDM to use this theme
-        sudo mkdir -p /etc/sddm.conf.d
-        sudo tee /etc/sddm.conf.d/theme.conf > /dev/null << 'SDDMCONF'
-[Theme]
-Current=sddm-astronaut-theme
-SDDMCONF
-
-        echo "Catppuccin Mocha SDDM theme configured"
-    else
-        echo "WARNING: sddm-astronaut-theme directory not found, skipping theme config"
-    fi
-fi
-
-# CachyOS's Hyprland/Noctalia edition ships greetd, and `systemctl enable sddm` refuses
-# while display-manager.service points at another unit. Under set -e that ended the
-# whole script here, before the dotfiles checkout.
-CURRENT_DM="$(basename "$(readlink /etc/systemd/system/display-manager.service 2>/dev/null)" .service)"
-if [ -n "$CURRENT_DM" ] && [ "$CURRENT_DM" != "sddm" ]; then
-    echo "Replacing display manager '$CURRENT_DM' with sddm (takes effect on reboot)"
-    sudo systemctl disable "$CURRENT_DM"
-fi
-sudo systemctl enable sddm
-echo "SDDM installed and enabled"
+install_sddm
 
 # ============================================================================
 # STEP 13/16: Bootstrap Git Config + Clone and Apply Dotfiles
