@@ -1,0 +1,5 @@
+# Password hashes + SSH keys for the image — this repo is public
+secrets.conf
+# Built ISOs and everything staged for them (the preseed embeds the secrets)
+build/
+*.iso

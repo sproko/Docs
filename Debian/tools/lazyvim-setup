@@ -1,0 +1,31 @@
+#!/bin/sh
+# Set up LazyVim for the current user: the LazyVim starter plus our overlay
+# (../nvim), then install its plugins, treesitter parsers and Mason tools
+# headless, so the first `nvim` doesn't have to. Needs the network. An existing
+# ~/.config/nvim is left alone, but its plugins are still installed.
+#
+#   lazyvim-setup            (as the user, not root)
+
+set -eu
+
+OVERLAY="$(cd "$(dirname "$0")/../nvim" && pwd)"
+CONFIG="$HOME/.config/nvim"
+
+if [ ! -e "$CONFIG" ]; then
+    git clone -q --depth 1 https://github.com/LazyVim/starter "$CONFIG"
+    rm -rf "$CONFIG/.git"
+    cp -R "$OVERLAY/." "$CONFIG/"
+fi
+
+cd /tmp
+nvim --headless "+Lazy! sync" +qa
+# Parsers compile here (tree-sitter + gcc); install() is async, so wait on it
+nvim --headless \
+    -c "lua require('nvim-treesitter').install(LazyVim.opts('nvim-treesitter').ensure_installed):wait(900000)" \
+    -c qa
+# MasonInstall blocks when headless. lua-language-server isn't in mason.nvim's
+# list: mason-lspconfig installs it on first use.
+nvim --headless -c "Lazy! load mason.nvim" \
+    -c "lua vim.cmd('MasonInstall ' .. table.concat(LazyVim.opts('mason.nvim').ensure_installed, ' ') .. ' lua-language-server')" \
+    -c qa
+echo

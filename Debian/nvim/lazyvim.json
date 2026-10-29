@@ -1,0 +1,7 @@
+{
+  "extras": [
+    "lazyvim.plugins.extras.lang.markdown"
+  ],
+  "install_version": 8,
+  "version": 8
+}

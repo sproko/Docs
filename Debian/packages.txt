@@ -1,0 +1,68 @@
+# Packages bootstrap.sh installs on every box, from the stick's offline repo or
+# from the Debian mirrors. One per line; # comments ok. Installed without
+# Recommends, so list anything a box actually needs.
+
+# Admin and shell
+sudo
+zsh
+starship
+git
+gh
+tmux
+htop
+btop
+fastfetch
+curl
+ca-certificates
+rsync
+less
+bash-completion
+man-db
+
+# Remote access and networking
+openssh-server
+network-manager
+wpasupplicant
+iw
+ethtool
+whiptail
+
+# Hardware
+smartmontools
+dmidecode
+pciutils
+usbutils
+intel-microcode
+amd64-microcode
+# The installer only adds firmware for what it saw; these cover the usual
+# Wi-Fi, NIC and GPU parts so a box works on whatever it boots.
+firmware-iwlwifi
+firmware-realtek
+firmware-intel-graphics
+firmware-intel-misc
+firmware-amd-graphics
+firmware-misc-nonfree
+firmware-atheros
+firmware-brcm80211
+firmware-mediatek
+
+# Post-mortem records: why did it die or restart?
+atop
+acct
+kdump-tools
+
+# Security updates
+unattended-upgrades
+
+# For Neovim + LazyVim (Neovim itself, and tree-sitter, come from upstream:
+# Debian's are too old). gcc compiles treesitter's language parsers.
+gcc
+libc6-dev
+ripgrep
+fd-find
+fzf
+lazygit
+unzip
+
+# From Anthropic's apt repo (bootstrap.sh adds it), not Debian's
+claude-code

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Install what tools/fetch-upstream downloaded into <dir>: Neovim in /opt with
+# /usr/local/bin/nvim, and tree-sitter and herdr in /usr/local/bin. Files
+# missing from <dir> are skipped. Run as root.
+#
+#   install-upstream <dir>
+
+set -eu
+
+dir="$1"
+bin=/usr/local/bin
+
+if [ -f "$dir/nvim-linux-x86_64.tar.gz" ]; then
+    rm -rf /opt/nvim-linux-x86_64
+    tar -xzf "$dir/nvim-linux-x86_64.tar.gz" -C /opt
+    ln -sfn /opt/nvim-linux-x86_64/bin/nvim "$bin/nvim"
+    "$bin/nvim" --version | head -1
+fi
+if [ -f "$dir/tree-sitter-linux-x64.gz" ]; then
+    gunzip -c "$dir/tree-sitter-linux-x64.gz" > "$bin/tree-sitter.new"
+    chmod 755 "$bin/tree-sitter.new"
+    mv "$bin/tree-sitter.new" "$bin/tree-sitter"
+    "$bin/tree-sitter" --version
+fi
+if [ -f "$dir/herdr-linux-x86_64" ]; then
+    install -m 755 "$dir/herdr-linux-x86_64" "$bin/herdr"
+    "$bin/herdr" --version
+fi

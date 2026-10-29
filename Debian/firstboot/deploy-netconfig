@@ -1,0 +1,253 @@
+#!/bin/sh
+# The network dialog: hostname, Wi-Fi, then each wired port. Writes the answers
+# as NetworkManager connections, replacing whatever wired and Wi-Fi setup the
+# box had. Runs on the console at first boot; run it again any time, as root:
+#
+#   deploy-netconfig
+#
+# Typical shop-floor box: Wi-Fi to the company network (DHCP, the way out), and
+# wired ports on separate local LANs with static IPs that devices are set up to
+# expect. Nothing changes until the summary screen is confirmed; cancelling at
+# any point exits non-zero and leaves the box as it was.
+
+set -eu
+
+[ "$(id -u)" -eq 0 ] || { echo "Run as root." >&2; exit 1; }
+
+BACKTITLE="Deploy network setup"
+# whiptail draws on stdout and answers on stderr; swap so $(...) captures it
+ask() {
+    whiptail --backtitle "$BACKTITLE" "$@" 3>&1 1>&2 2>&3
+}
+
+valid_cidr() {
+    echo "$1" | grep -qE '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])/([1-9]|[12][0-9]|3[0-2])$'
+}
+valid_ipv4() {
+    valid_cidr "$1/32"
+}
+# Whether IPv4 address $1 is inside a.b.c.d/nn $2
+in_subnet() {
+    echo "$1 $2" | awk '{
+        split($1, a, "."); split($2, c, "/"); split(c[1], b, ".")
+        ip = ((a[1] * 256 + a[2]) * 256 + a[3]) * 256 + a[4]
+        net = ((b[1] * 256 + b[2]) * 256 + b[3]) * 256 + b[4]
+        size = 2 ^ (32 - c[2])
+        exit !(int(ip / size) == int(net / size))
+    }'
+}
+
+# Prints "auto" (DHCP) or a static a.b.c.d/nn for the connection named $1
+ask_addressing() {
+    how="$(ask --title "$1" --menu "How does $1 get its address?" 12 64 2 \
+        static "Static IP (local LAN)" \
+        dhcp   "DHCP")"
+    if [ "$how" = "dhcp" ]; then
+        echo "auto"
+        return
+    fi
+    addr=""
+    while :; do
+        addr="$(ask --title "$1 static IP" --inputbox \
+            "IPv4 address with prefix length, e.g. 192.168.10.5/24:" 10 64 "$addr")"
+        valid_cidr "$addr" && break
+        ask --title "$1 static IP" --msgbox "\"$addr\" isn't an address/prefix like 192.168.10.5/24." 8 64
+    done
+    echo "$addr"
+}
+
+ask_nonempty() {
+    while :; do
+        value="$(ask "$@")"
+        [ -n "$value" ] && { echo "$value"; return; }
+        ask --msgbox "This can't be empty." 8 40
+    done
+}
+
+if [ -n "${SSH_CONNECTION:-}" ]; then
+    ask --title "Over SSH" --defaultno --yesno \
+        "You're connected over SSH. Applying new network settings can cut this session off.\n\nContinue?" 11 64
+fi
+ask --title "Network setup" --yesno \
+    "Set up this box's name and network now?\n\nNo leaves things as they are (at first boot: DHCP on every wired port). Run deploy-netconfig later to change them." 12 64
+
+# ---------------------------------------------------------------------------
+# Hostname
+# ---------------------------------------------------------------------------
+name="$(hostname)"
+while :; do
+    name="$(ask --title "Hostname" --inputbox "System name (letters, digits, hyphens):" 10 64 "$name")"
+    if echo "$name" | grep -qE '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$'; then
+        break
+    fi
+    ask --title "Hostname" --msgbox "\"$name\" isn't a valid hostname." 8 64
+done
+
+# ---------------------------------------------------------------------------
+# Wi-Fi
+# ---------------------------------------------------------------------------
+# Answers are collected as "ifname addressing label" lines, plus the Wi-Fi
+# details, and only turned into connections after the summary.
+CONNS=""
+SUMMARY=""
+HAVE_DHCP=""
+conn_add() {
+    CONNS="$CONNS$1 $2 $3
+"
+    [ "$2" = "auto" ] && HAVE_DHCP=yes
+    SUMMARY="$SUMMARY$(printf '%-9s %s' "$3:" "$([ "$2" = auto ] && echo DHCP || echo "$2")")\n"
+}
+
+wifi_dev="$(nmcli -t -f DEVICE,TYPE device status | awk -F: '$2 == "wifi" {print $1; exit}')"
+wifi_mode="none"
+if [ -n "$wifi_dev" ]; then
+    wifi_mode="$(ask --title "Wi-Fi" --menu "How should Wi-Fi ($wifi_dev) be set up?" 14 64 4 \
+        psk  "WPA2/WPA3 Personal (shared password)" \
+        eap  "WPA2 Enterprise (username + password, PEAP)" \
+        open "Open network (no password)" \
+        none "No Wi-Fi")"
+fi
+
+wifi_hidden="no"
+if [ "$wifi_mode" != "none" ]; then
+    nmcli radio wifi on
+    ask --title "Wi-Fi" --infobox "Scanning for networks..." 7 40
+    # nmcli -t escapes ":" and "\" in names; spaces survive the newline split
+    set --
+    while IFS= read -r net; do
+        [ -n "$net" ] && set -- "$@" "$net" ""
+    done <<EOF
+$(nmcli -t -f SSID device wifi list ifname "$wifi_dev" --rescan yes 2>/dev/null \
+    | sed -e 's/\\:/:/g' -e 's/\\\\/\\/g' | sort -u)
+EOF
+    set -- "$@" "<other>" "Type the network name (hidden networks too)"
+    ssid="$(ask --title "Wi-Fi network" --menu "Which network?" 20 70 12 "$@")"
+    if [ "$ssid" = "<other>" ]; then
+        ssid="$(ask_nonempty --title "Wi-Fi network" --inputbox "Network name (SSID):" 10 64)"
+        wifi_hidden="yes"
+    fi
+    case "$wifi_mode" in
+        psk)
+            while :; do
+                wifi_psk="$(ask --title "Wi-Fi password" --passwordbox "Password for $ssid:" 10 64)"
+                [ ${#wifi_psk} -ge 8 ] && [ ${#wifi_psk} -le 63 ] && break
+                ask --msgbox "WPA passwords are 8 to 63 characters." 8 50
+            done
+            ;;
+        eap)
+            wifi_user="$(ask_nonempty --title "Wi-Fi login" --inputbox "Username for $ssid:" 10 64)"
+            wifi_pass="$(ask_nonempty --title "Wi-Fi login" --passwordbox "Password for $wifi_user:" 10 64)"
+            ;;
+    esac
+    conn_add "$wifi_dev" "$(ask_addressing "Wi-Fi ($ssid)")" "Wi-Fi"
+    SUMMARY="$SUMMARY          $ssid ($wifi_mode)\n"
+fi
+
+# ---------------------------------------------------------------------------
+# Wired ports
+# ---------------------------------------------------------------------------
+for nic in $(nmcli -t -f DEVICE,TYPE device status | awk -F: '$2 == "ethernet" {print $1}'); do
+    ip link set "$nic" up 2>/dev/null || true
+done
+sleep 3
+for nic in $(nmcli -t -f DEVICE,TYPE device status | awk -F: '$2 == "ethernet" {print $1}'); do
+    mac="$(cat "/sys/class/net/$nic/address")"
+    case "$(cat "/sys/class/net/$nic/carrier" 2>/dev/null)" in
+        1) link="cable in" ;;
+        *) link="no cable" ;;
+    esac
+    model="$(udevadm info -q property -p "/sys/class/net/$nic" 2>/dev/null \
+        | sed -n 's/^ID_MODEL_FROM_DATABASE=//p')"
+    use="$(ask --title "Wired port $nic" --menu \
+        "$nic: ${model:-ethernet}\nMAC $mac, $link\n\nSet up this port?" 14 70 2 \
+        yes "Configure it" \
+        no  "Leave it unused")"
+    [ "$use" = "yes" ] || continue
+    conn_add "$nic" "$(ask_addressing "$nic")" "$nic"
+done
+
+# ---------------------------------------------------------------------------
+# Way out, when nothing hands one out
+# ---------------------------------------------------------------------------
+# With DHCP anywhere, that supplies the gateway and DNS, and static LANs never
+# take the default route. Static-only boxes are asked; blank means the box
+# only talks to its local LANs.
+gw=""
+gw_if=""
+dns=""
+if [ -n "$CONNS" ] && [ -z "$HAVE_DHCP" ]; then
+    while :; do
+        gw="$(ask --title "Default gateway" --inputbox \
+            "Default gateway (blank for none: local LANs only):" 10 64 "$gw")"
+        [ -z "$gw" ] && break
+        if ! valid_ipv4 "$gw"; then
+            ask --msgbox "\"$gw\" isn't an IPv4 address." 8 50
+            continue
+        fi
+        gw_if="$(echo "$CONNS" | while read -r ifname addr label; do
+            [ "$addr" != "auto" ] && in_subnet "$gw" "$addr" && { echo "$ifname"; break; }
+        done)"
+        [ -n "$gw_if" ] && break
+        ask --msgbox "$gw isn't on any of the static networks entered." 8 64
+    done
+    if [ -n "$gw" ]; then
+        dns="$(ask --title "DNS" --inputbox "DNS servers (space separated):" 10 64)"
+        SUMMARY="${SUMMARY}Gateway:  $gw (via $gw_if)\nDNS:      ${dns:-none}\n"
+    fi
+fi
+[ -n "$CONNS" ] || SUMMARY="${SUMMARY}Network:  none: every port left unconfigured\n"
+
+ask --title "Apply these settings?" --yesno \
+    "Hostname: $name\n$SUMMARY\nThis replaces the box's current wired and Wi-Fi setup." 20 70
+
+# ---------------------------------------------------------------------------
+# Apply
+# ---------------------------------------------------------------------------
+hostnamectl set-hostname "$name"
+if grep -q '^127\.0\.1\.1' /etc/hosts; then
+    sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$name/" /etc/hosts
+else
+    printf '127.0.1.1\t%s\n' "$name" >> /etc/hosts
+fi
+
+# From here on only the connections below exist: no automatic DHCP on ports
+# that weren't configured
+cat > /etc/NetworkManager/conf.d/90-deploy.conf <<'EOF'
+# Written by deploy-netconfig: only the ports it configured are used
+[main]
+no-auto-default=*
+EOF
+nmcli general reload conf
+nmcli -t -f UUID,TYPE connection show | awk -F: '$2 == "802-3-ethernet" || $2 == "802-11-wireless" {print $1}' \
+    | while read -r uuid; do nmcli connection delete uuid "$uuid" >/dev/null; done
+
+echo "$CONNS" | while read -r ifname addr label; do
+    [ -n "$ifname" ] || continue
+    if [ "$addr" = "auto" ]; then
+        set -- ipv4.method auto
+    else
+        set -- ipv4.method manual ipv4.addresses "$addr" ipv6.method disabled
+        if [ "$ifname" = "$gw_if" ]; then
+            set -- "$@" ipv4.gateway "$gw"
+            [ -n "$dns" ] && set -- "$@" ipv4.dns "$(echo $dns | tr ' ' ',')"
+        else
+            set -- "$@" ipv4.never-default yes
+        fi
+    fi
+    if [ "$ifname" = "$wifi_dev" ]; then
+        set -- type wifi ifname "$ifname" con-name "wifi-$ifname" ssid "$ssid" \
+            802-11-wireless.hidden "$wifi_hidden" "$@"
+        case "$wifi_mode" in
+            psk) set -- "$@" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$wifi_psk" ;;
+            # No CA certificate yet, so the RADIUS server isn't verified
+            eap) set -- "$@" wifi-sec.key-mgmt wpa-eap 802-1x.eap peap \
+                    802-1x.phase2-auth mschapv2 802-1x.identity "$wifi_user" \
+                    802-1x.password "$wifi_pass" ;;
+        esac
+    else
+        set -- type ethernet ifname "$ifname" con-name "wired-$ifname" "$@"
+    fi
+    nmcli connection add "$@" connection.autoconnect yes >/dev/null
+done
+
+ask --title "Network setup" --msgbox "Applied. Connections come up on their own as links appear.\n\nCheck them with: nmcli device status" 10 64

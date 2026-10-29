@@ -1,0 +1,23 @@
+[Unit]
+Description=Deploy first boot: network dialog, then updates
+# Set by installer/late.sh; firstboot.sh removes it when done
+ConditionPathExists=/var/lib/deploy/firstboot
+After=NetworkManager.service systemd-user-sessions.service
+Wants=NetworkManager.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/share/deploy/firstboot/firstboot.sh
+# The dialog runs on tty2, which firstboot.sh switches to, so boot messages
+# still printing on tty1 can't scribble over it
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty2
+TTYReset=yes
+TTYVHangup=yes
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target
