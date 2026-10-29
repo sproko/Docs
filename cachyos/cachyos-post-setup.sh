@@ -56,6 +56,20 @@ PERSONAL_GH_CONFIG="$HOME/.config/gh-personal"
 # What gh falls back to anywhere outside the two project trees. Personal by
 # design: everywhere except $WORK_DIR should answer as the personal account.
 DEFAULT_GH_CONFIG="$HOME/.config/gh"
+DEFAULT_GH_USER="$PERSONAL_GH_USER"
+
+# Work-issued boxes are laid out the other way round: work is the default via a
+# global core.sshCommand, personal is scoped to ~/personal, and there are no SSH
+# aliases, URL rewrites, direnv or split gh config. Detected from ~/.gitconfig
+# rather than flagged, since that file is what actually picks a commit's identity.
+BOX_SHAPE=personal
+WORK_SSH_KEY="$HOME/.ssh/id_ed25519_angstrom"
+PERSONAL_SSH_KEY="$HOME/.ssh/id_ed25519_personal"
+if git config --global --get core.sshCommand >/dev/null && [ -d "$HOME/personal" ]; then
+    BOX_SHAPE=work
+    PERSONAL_DIR="$HOME/personal"
+    DEFAULT_GH_USER="$WORK_GH_USER"
+fi
 
 # Inbound SSH. Scoped to the home LAN rather than opened globally: these are
 # laptops that end up on café and hotel wifi, where a plain `ufw allow 22` would
@@ -65,7 +79,7 @@ DEFAULT_GH_CONFIG="$HOME/.config/gh"
 # link`. Set to 0.0.0.0/0 to open it fully.
 SSH_LAN_CIDR="192.168.1.0/24"
 
-CLAUDE_CONFIG_DIR="$HOME/repo/claude-config"
+CLAUDE_CONFIG_DIR="$PERSONAL_DIR/claude-config"
 # -C "$HOME" matters: without it, status prints paths relative to wherever the
 # script was invoked from ("../../.config/…"), which is noise in a report.
 DOTFILES_GIT=(git -C "$HOME" --git-dir="$HOME/.dotfiles" --work-tree="$HOME")
@@ -160,7 +174,9 @@ if [ "$CHECK_ONLY" = false ]; then
 
     # direnv drives the per-directory GH_CONFIG_DIR switch, and an .envrc stays
     # inert until it's been allowed once per machine.
-    if command -v direnv &>/dev/null; then
+    if [ "$BOX_SHAPE" = work ]; then
+        echo "  work-shape box: no per-directory gh switch, skipping direnv allow"
+    elif command -v direnv &>/dev/null; then
         for d in "$WORK_DIR" "$PERSONAL_DIR"; do
             if [ -f "$d/.envrc" ]; then
                 (cd "$d" && direnv allow) && echo "  direnv allow: $d"
@@ -226,24 +242,34 @@ fi
 # ============================================================================
 section "CHECKS: SSH key selection"
 
+# label, expected GitHub login, then the ssh target and any options it needs.
 check_ssh_alias() {
-    local host="$1" expect="$2" out
+    local label="$1" expect="$2" out
+    shift 2
     # GitHub always exits non-zero here ("does not provide shell access"), so the
     # greeting text is the only usable signal — never the exit code.
-    out=$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$host" 2>&1)
+    out=$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$@" 2>&1)
     if grep -q "Hi ${expect}!" <<< "$out"; then
-        ok "$host authenticates as $expect"
-    elif grep -qi "permission denied\|could not resolve\|timed out" <<< "$out"; then
-        bad "$host failed to authenticate: $(head -1 <<< "$out")"
+        ok "$label authenticates as $expect"
+    elif grep -qi "permission denied\|could not resolve\|timed out\|no such file" <<< "$out"; then
+        bad "$label failed to authenticate: $(head -1 <<< "$out")"
     else
         # Authenticated, but as somebody else — the failure mode that shows up
         # later as a misleading "Repository not found" on a private repo.
-        bad "$host authenticated as the WRONG account: $(head -1 <<< "$out")"
+        bad "$label authenticated as the WRONG account: $(head -1 <<< "$out")"
     fi
 }
 
-check_ssh_alias "$WORK_SSH_ALIAS" "$WORK_GH_USER"
-check_ssh_alias "$PERSONAL_SSH_ALIAS" "$PERSONAL_GH_USER"
+if [ "$BOX_SHAPE" = work ]; then
+    for pair in "$WORK_SSH_KEY:$WORK_GH_USER" "$PERSONAL_SSH_KEY:$PERSONAL_GH_USER"; do
+        key="${pair%%:*}"
+        check_ssh_alias "$(basename "$key")" "${pair#*:}" \
+            -i "$key" -o IdentitiesOnly=yes -o IdentityAgent=none git@github.com
+    done
+else
+    check_ssh_alias "$WORK_SSH_ALIAS" "$WORK_GH_USER" "$WORK_SSH_ALIAS"
+    check_ssh_alias "$PERSONAL_SSH_ALIAS" "$PERSONAL_GH_USER" "$PERSONAL_SSH_ALIAS"
+fi
 
 # ============================================================================
 # CHECKS: git identity + URL rewrite, per directory
@@ -267,23 +293,37 @@ check_identity() {
         rm -rf "$probe"; return
     fi
 
-    local email rewritten
+    local email rewritten sshcmd
     email=$(git -C "$probe" config user.email 2>/dev/null)
     git -C "$probe" remote add origin "git@github.com:example/example.git" 2>/dev/null
     rewritten=$(git -C "$probe" ls-remote --get-url origin 2>/dev/null)
+    sshcmd=$(git -C "$probe" config core.sshCommand 2>/dev/null)
     rm -rf "$probe"
 
     [ "$email" = "$expect_email" ] \
         && ok "$dir → $email" \
         || bad "$dir → identity is '$email', expected '$expect_email'"
 
+    # Work-shape boxes pick the key with core.sshCommand, so expect_host is a key path.
+    if [ "$BOX_SHAPE" = work ]; then
+        [[ "$sshcmd" == *"$(basename "$expect_host")"* ]] \
+            && ok "$dir → uses $(basename "$expect_host")" \
+            || bad "$dir → core.sshCommand is '$sshcmd', expected $(basename "$expect_host")"
+        return
+    fi
+
     [[ "$rewritten" == git@${expect_host}:* ]] \
         && ok "$dir → git@github.com: rewrites to $expect_host" \
         || bad "$dir → URL rewrite gave '$rewritten', expected git@$expect_host:…"
 }
 
-check_identity "$WORK_DIR" "$WORK_EMAIL" "$WORK_SSH_ALIAS"
-check_identity "$PERSONAL_DIR" "$PERSONAL_EMAIL" "$PERSONAL_SSH_ALIAS"
+if [ "$BOX_SHAPE" = work ]; then
+    check_identity "$WORK_DIR" "$WORK_EMAIL" "$WORK_SSH_KEY"
+    check_identity "$PERSONAL_DIR" "$PERSONAL_EMAIL" "$PERSONAL_SSH_KEY"
+else
+    check_identity "$WORK_DIR" "$WORK_EMAIL" "$WORK_SSH_ALIAS"
+    check_identity "$PERSONAL_DIR" "$PERSONAL_EMAIL" "$PERSONAL_SSH_ALIAS"
+fi
 
 # ============================================================================
 # CHECKS: gh CLI account, per directory
@@ -326,9 +366,13 @@ check_gh_account() {
     fi
 }
 
-check_gh_account "$WORK_DIR"     "$WORK_GH_CONFIG"     "$WORK_GH_USER" "$WORK_GH_ORG"
-check_gh_account "$PERSONAL_DIR" "$PERSONAL_GH_CONFIG" "$PERSONAL_GH_USER"
-check_gh_account "default"       "$DEFAULT_GH_CONFIG"  "$PERSONAL_GH_USER"
+if [ "$BOX_SHAPE" = work ]; then
+    check_gh_account "default" "$DEFAULT_GH_CONFIG" "$WORK_GH_USER" "$WORK_GH_ORG"
+else
+    check_gh_account "$WORK_DIR"     "$WORK_GH_CONFIG"     "$WORK_GH_USER" "$WORK_GH_ORG"
+    check_gh_account "$PERSONAL_DIR" "$PERSONAL_GH_CONFIG" "$PERSONAL_GH_USER"
+    check_gh_account "default"       "$DEFAULT_GH_CONFIG"  "$PERSONAL_GH_USER"
+fi
 
 # check_gh_account only asks who the ACTIVE account is, which still passes when
 # both logins landed in one config — the state `gh auth login` leaves behind
@@ -339,7 +383,7 @@ if command -v gh &>/dev/null && [ -d "$DEFAULT_GH_CONFIG" ]; then
     n_default=$(GH_CONFIG_DIR="$DEFAULT_GH_CONFIG" gh auth status 2>/dev/null | grep -c 'Logged in to')
     [ "$n_default" -le 1 ] \
         && ok "default gh config holds a single account" \
-        || bad "default gh config holds $n_default accounts — prune with: GH_CONFIG_DIR=$DEFAULT_GH_CONFIG gh auth logout --user $WORK_GH_USER"
+        || bad "default gh config holds $n_default accounts — prune the one that isn't $DEFAULT_GH_USER: GH_CONFIG_DIR=$DEFAULT_GH_CONFIG gh auth logout --user <other>"
 fi
 
 # ============================================================================
@@ -395,7 +439,8 @@ if command -v ufw &>/dev/null && [ "$(systemctl is-active ufw 2>/dev/null)" = "a
 
         # A LAN-scoped rule is correctly unreachable from anywhere else, which
         # otherwise looks like a broken firewall when you're travelling.
-        if [ "$rule_src" != "0.0.0.0/0" ] \
+        # rule_src is a list once there's an IPv6 rule too ("0.0.0.0/0,::/0").
+        if [[ ",$rule_src," != *",0.0.0.0/0,"* ]] \
            && ! ip -4 route show scope link 2>/dev/null | grep -qF "$rule_src"; then
             warn "not currently on $rule_src — SSH to this box is expected to be unreachable from here"
         fi
@@ -454,9 +499,11 @@ if command -v dotnet &>/dev/null; then
     fi
 fi
 
-command -v direnv &>/dev/null \
-    && ok "direnv installed" \
-    || bad "direnv missing — per-directory gh switching won't work"
+if [ "$BOX_SHAPE" = personal ]; then
+    command -v direnv &>/dev/null \
+        && ok "direnv installed" \
+        || bad "direnv missing — per-directory gh switching won't work"
+fi
 
 # ============================================================================
 # CHECKS: desktop apps
