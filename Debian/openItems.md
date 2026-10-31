@@ -5,9 +5,9 @@ what was decided, rather than deleting it.
 
 ## Open
 
-- **Test on real hardware**: the M90n (`freebsd`, to be reinstalled as the
-  prototype). Still untested anywhere: Wi-Fi (scan, PSK, PEAP), BIOS boot,
-  serial console on a real port.
+- **Still untested**: BIOS boot, Wi-Fi Enterprise (PEAP), the serial console
+  on a real port, and the Neovim/LazyVim stick build (the M90n got it through
+  `deploy-bootstrap` online, not from the stick).
 - **WPA2-Enterprise without a CA certificate.** The dialog sets up PEAP without
   one, so the box doesn't verify the RADIUS server. Get the company CA from IT
   and pin it (`802-1x.ca-cert`).
@@ -49,6 +49,11 @@ what was decided, rather than deleting it.
 - **No Docker** (2026-10-25): services run natively; saves memory on 4 GB boxes
   and avoids Docker's firewall bypass.
 - **No GUI** (2026-10-25).
+- **Real hardware** (2026-10-25): the M90n installs from the stick (UEFI), and
+  Wi-Fi (Intel, PSK), both Realtek NICs and the first-boot dialog work.
+- **No building on production boxes** (2026-10-31): no Go or .NET toolchains,
+  so no gopls or C# support in LazyVim; programs arrive compiled. gcc is the
+  one exception, there only so LazyVim can compile treesitter parsers.
 - **LVM + ext4** with free space left in the VG (from aelab-stack's item 9).
 - **Network setup at first boot**, not in the installer: the installer can only
   configure one interface, and this way it can be rerun (`deploy-netconfig`).

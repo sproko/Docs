@@ -12,7 +12,8 @@
 
 set -eu
 
-DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
+# readlink: run as /usr/local/sbin/deploy-bootstrap, a symlink to this file
+DEPLOY_DIR="$(dirname "$(readlink -f "$0")")"
 . "$DEPLOY_DIR/deploy.conf"
 
 [ "$(id -u)" -eq 0 ] || { echo "Run as root." >&2; exit 1; }
